@@ -1,0 +1,141 @@
+{
+  "spec": "sehatlog-crypto-v1",
+  "aes_kw": [
+    {
+      "name": "rfc3394-4.6",
+      "kek": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "key": "00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f",
+      "wrapped": "28c9f404c4b810f4cbccb35cfb87f8263f5786e2d80ed326cbc7f0e71a99f43bfb988b9b7a02dd21"
+    },
+    {
+      "name": "category-key-wraps-dek",
+      "kek": "d14333621160356759dbfc94151f6fce90139bbfb9142ac8e10414241350837a",
+      "key": "a01b630111340bf61b102a4a75111cd9c8aec3891baa3389391d05a80e432b82",
+      "wrapped": "6138ca70c820a04761851bc62af59cd75a2cdb8d6f0f17a3a240825207bf252e564d8a7aef34b691"
+    }
+  ],
+  "entry_seal": [
+    {
+      "name": "allergy",
+      "dek": "3b1d5a723515543bd8daf3862cbc787485cd6e0cb14131fc9bef4628452377aa",
+      "nonce": "06c5b30b952b9ee9151270cd",
+      "record_id": "rec_7f3a91",
+      "category": "basic",
+      "key_version": 1,
+      "plaintext_utf8": "{\"kind\":\"Allergy\",\"title\":\"Penicillin: anaphylaxis\",\"fields\":{\"Severity\":\"Severe\"}}",
+      "ciphertext": "2d1e9c5ed2457afa98bafffa85eefba3fd04573d994af1fdf22453a5ee3ea2d0932670f2d5dcadef9c4ccb392b22c27f70c6742c1287457135c378e09a466d8276fd0bf81106adf3ae7b357953c297b468e826ec6af99ef212da219af3d0caeef0704a"
+    },
+    {
+      "name": "unicode-note",
+      "dek": "4219a82d8f93d0cc132f7d1beacd892ba08883f9f3bb367bd3d4cfb7771e139b",
+      "nonce": "ac35487bd8b958cdd089a39e",
+      "record_id": "rec_7f3a91",
+      "category": "clinical",
+      "key_version": 3,
+      "plaintext_utf8": "{\"kind\":\"Note\",\"title\":\"Ọmọ ọwọ́ — follow-up\",\"details\":\"Ìbà, 38.9 °C\"}",
+      "ciphertext": "e602e6a8c077c75fa85987a603f93bd52f521448191e3eee7ec5f94e366af993deb0538971d595e81ccd268b8f8f78224ae820b8440a48595684f46c121b3193b1f46f45558208500d3b27ca2e6f12201a9eab49a76904334af54ee67d0f3323931688a32f"
+    },
+    {
+      "name": "empty",
+      "dek": "d2c43b1b6dccb1d8301cb1ee187a06ab47ae9dfd9e71c9b0e731483609056527",
+      "nonce": "f83e01752688569e95520621",
+      "record_id": "rec_000001",
+      "category": "labs",
+      "key_version": 1,
+      "plaintext_utf8": "",
+      "ciphertext": "955e5c066c1e360759d5d0758ff7284c"
+    }
+  ],
+  "key_wrap": [
+    {
+      "name": "category-key-to-hospital",
+      "recipient_private": "93beae14ad9307d11dc23c9a68fd3b73b5b3312e92fd9661859936db56c34a56",
+      "recipient_public": "804892450f27f783e43a38690b3d8f9179ef386f9dd9665d11af970ab0925f0f",
+      "ephemeral_private": "57244f264993967c3b398ba84df3dce70b47fe6411f7f1151b652f6fcd20ee7e",
+      "ephemeral_public": "566249bee7ac1cec6570fb662c8c0f331f119e602a5fe58ed62c10e82c4cb165",
+      "context": "category|rec_7f3a91|clinical|2",
+      "key": "8b721b382253b773b9fc5efe02bc7cfe2a557531d9df8ef2142b8524b9991506",
+      "wrapped": "566249bee7ac1cec6570fb662c8c0f331f119e602a5fe58ed62c10e82c4cb165091dcb1feb2ba751c466791fcd130ebcd590f3628887a9e7cdc0147a6168dbffd7c702836fca3074"
+    },
+    {
+      "name": "entry-key-to-author",
+      "recipient_private": "66170329427a2213666cd0a6b41aa6730d572846a5f390be28ecf69eef404587",
+      "recipient_public": "2a99728b12448e77808ac600efd9d73d03f74c6923214855cc016028f2a2ae4a",
+      "ephemeral_private": "5fa006273605cfb9fdf6e42cf6bcad2d99288c34c7595ca8be90691fec3a9683",
+      "ephemeral_public": "72deab9abf75fb4121941a7938b2d2c882e1fb35852495891c39b00ca6c67f40",
+      "context": "dek|ent_51c2d0",
+      "key": "5aa26b4218386f4b11827929d0f856f51ab9aef035b5a09f4e189e0af5752eee",
+      "wrapped": "72deab9abf75fb4121941a7938b2d2c882e1fb35852495891c39b00ca6c67f40cc7035e94c82d3ae5a941a707e8af5a54e886b19523240a87b850e1187772ac058fce3a14a5948b5"
+    }
+  ],
+  "blind_index": [
+    {
+      "pepper": "8c9a6f3e0bb7773aaf4141909d189ec78bccf871a035a7a52d399c7a8f6506a3",
+      "nin": "23456789012",
+      "index": "59eb8a3e9800f584bae105fcbda1cc411c00ca39b55540e9de4187b21af451e4"
+    },
+    {
+      "pepper": "8c9a6f3e0bb7773aaf4141909d189ec78bccf871a035a7a52d399c7a8f6506a3",
+      "nin": "00000000000",
+      "index": "82c19cba1a1c4f64c85f560a70ef33993a00d70dafe23d17e977cdea97bf2672"
+    }
+  ],
+  "entry_signature": [
+    {
+      "seed": "380a0603d5c7c8f217f8587580d68c5f769ef54ee4077795f4d03ae6792a3d8d",
+      "public_key": "33e23a989ab167bf46e5d84e9d160ef5d899ef967275ce0839fac44cca9e8c5f",
+      "record_id": "rec_7f3a91",
+      "entry_id": "ent_51c2d0",
+      "category": "clinical",
+      "key_version": 2,
+      "nonce": "388cf4017e03a13d50f67a84",
+      "ciphertext": "44f6ba7623f4ea8184be050da31e3dfbb8e7256b07a185302500da735e01b4aa936d73f0fee55e0e941ba1eecc835417",
+      "wrapped_dek": "8840518c67a90b2967f6c817ba6a4b8598af2636bc5ed140d4df439a8d4d5a6e03a4fcc5ef6fe5ab",
+      "author_wrapped_dek": "172884d44a4a8a651ed53e60e5083356128201fada5e6531f86f492174312c754da0a05554f1ea658346a86e1a654a9a4798ca6df2ef36584ed8106a7b8296920cc045e9ad18edb0",
+      "amends_entry_id": "",
+      "input_method": "typed",
+      "signing_input_utf8": "sehatlog/v1/entry-sig\nrec_7f3a91\nent_51c2d0\nclinical\n2\nOIz0AX4DoT1Q9nqE\nRPa6diP06oGEvgUNox49+7jnJWsHoYUwJQDac14BtKqTbXPw/uVeDpQboe7Mg1QX\niEBRjGepCyln9sgXumpLhZivJja8XtFA1N9Dmo1NWm4DpPzF72/lqw==\nFyiE1EpKimUe1T5g5QgzVhKCAfraXmUx+G9JIXQxLHVNoKBVVPHqZYNGqG4aZUqaR5jKbfLvNlhO2BBqe4KWkgzARemtGO2w\n\ntyped",
+      "signature": "75a58d81b7a032514c4888afe24815d8b080482ebcdbda8cab8a66d8e92c2e350c74090c65633473826d725e61e5d1eef4d19aa3caa0c6928a1167915945920d"
+    },
+    {
+      "seed": "380a0603d5c7c8f217f8587580d68c5f769ef54ee4077795f4d03ae6792a3d8d",
+      "public_key": "33e23a989ab167bf46e5d84e9d160ef5d899ef967275ce0839fac44cca9e8c5f",
+      "record_id": "rec_7f3a91",
+      "entry_id": "ent_9a0b11",
+      "category": "clinical",
+      "key_version": 2,
+      "nonce": "3b4fd6abd103b103760fd8fb",
+      "ciphertext": "5ac9d1a2d7a5d8134d64a491531dc4eb10c7488d416d22082943fda7772887b1929208203317bc5429b0f2b40bc7c506",
+      "wrapped_dek": "fb728e002911940bed404713241386364b58c57bb06b9cbd096ae190c6f687120d77f288fa2f9221",
+      "author_wrapped_dek": "e709919b2ee0a4442f84731ea0975c81134f952f97e6a111b4f7368ac54de96dbf3212bd2d70c57ed779c08f65e3f75c831ee3eb179ffaf7fa8f41924b59caca5eead54ffcdcb251",
+      "amends_entry_id": "ent_51c2d0",
+      "input_method": "detected_ocr",
+      "signing_input_utf8": "sehatlog/v1/entry-sig\nrec_7f3a91\nent_9a0b11\nclinical\n2\nO0/Wq9EDsQN2D9j7\nWsnRotel2BNNZKSRUx3E6xDHSI1BbSIIKUP9p3coh7GSkgggMxe8VCmw8rQLx8UG\n+3KOACkRlAvtQEcTJBOGNktYxXuwa5y9CWrhkMb2hxINd/KI+i+SIQ==\n5wmRmy7gpEQvhHMeoJdcgRNPlS+X5qERtPc2isVN6W2/MhK9LXDFftd5wI9l4/dcgx7j6xef+vf6j0GSS1nKyl7q1U/83LJR\nent_51c2d0\ndetected_ocr",
+      "signature": "4484f58457d3cb3ae1d7b34191fd5a3a736e26da5ffaa87de9f9bba4204aec822ef28ff1a51b6c0fe5e22cfc5cfbbcbd80982aeb38a0938b65948adfe3716f07"
+    }
+  ],
+  "merge_signature": [
+    {
+      "reviewer_seed": "ce305ef6a36bbaed5f4bea14a19cbfcf75e7bc9e0d1348200cda37ae4391bc5e",
+      "reviewer_public_key": "adae31c4964d6cfef467220df5b388196781f3b4894ab51943ea8467fa0f8011",
+      "proposal_id": "prp_3c4d5e",
+      "entry_id": "ent_51c2d0",
+      "record_id": "rec_7f3a91",
+      "author_signature": "75a58d81b7a032514c4888afe24815d8b080482ebcdbda8cab8a66d8e92c2e350c74090c65633473826d725e61e5d1eef4d19aa3caa0c6928a1167915945920d",
+      "signing_input_utf8": "sehatlog/v1/merge-sig\nprp_3c4d5e\nent_51c2d0\nrec_7f3a91\ndaWNgbegMlFMSIiv4kgV2LCASC6829qMq4pm2OksLjUMdAkMZWM0c4Jtcl5h5dHu9NGao8qgxpKKEWeRWUWSDQ==",
+      "signature": "84dfc31bdb513e17639ffdb5a2ffeaf5a6b088ed7e997b5e456819b96ec21b20cf18852cde62c38ec18a35633a0996e39e40eddc70118323121f91a43d934602"
+    }
+  ],
+  "escrow": [
+    {
+      "record_id": "rec_7f3a91",
+      "s": "63c9c6f45ba14c79d86ecd7f96e9d80d7204806de59a83922b61297a98dec1e4",
+      "r": "e7aebb7c39288e1b8ff617d3ab157d016ed794465035bac70e89e02a1c23129f",
+      "i": "5d7f905ddb8ea8fadfd364d4913c945497056b696d36db25922bb8cd2b87fcbd",
+      "k": "d918edd5b9076a98884bbe78acc031588bd67f42d899e270b7c3719daf7a2fc6",
+      "escrow_private": "671d03a3918ed7a934ec7331d9757c9020941f2672cf5e59ef4f87267313aba3",
+      "nonce": "24215268df5d8cd063165bc2",
+      "sealed": "63005d213165fb765c1c8154e662d9b170bc7b29433c03211fddbcc1d9c4fd8db75396dd1a721a2b70be6c804ea88b82"
+    }
+  ]
+}
