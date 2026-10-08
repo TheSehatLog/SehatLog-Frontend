@@ -5,7 +5,9 @@ import { EntryView } from "@/components/live/EntryView";
 import { useLive } from "@/components/live/LiveSession";
 import { Badge, Button, Card, Empty, Field, fmt, inputCls, Modal } from "@/components/ui";
 import { ApiError, fromB64, type AuditEvent, type ConnectionView, type Entry, type Proposal, type RequestView } from "@/lib/live/api";
-import { CATEGORIES, CATEGORY_LABEL, createRecordKeys, getRecordKeys } from "@/lib/live/keystore";
+import { addRecordKey, CATEGORIES, CATEGORY_LABEL, createRecordKeys, getRecordKeys } from "@/lib/live/keystore";
+import { rotateKeys } from "@/lib/live/rotation";
+import { setupEscrow } from "@/lib/live/escrow";
 import { decryptEnvelope, wrapKeysForFacility, type Payload } from "@/lib/live/records";
 
 const ACTING: Record<RequestView["acting_as"], string> = {
@@ -196,6 +198,25 @@ type Tab = "hospitals" | "record" | "proposals" | "activity";
 function ManagedRecord({ recordId, own }: { recordId: string; own: boolean }) {
   const { call } = useLive();
   const [connections, setConnections] = useState<ConnectionView[] | null | "forbidden">(null);
+  const [rotationNote, setRotationNote] = useState("");
+
+  // After removing a hospital: new keys for the categories it held, so it can't read
+  // anything written from now on, even with keys it kept.
+  async function afterRemoval(removed: ConnectionView) {
+    const current = getRecordKeys(recordId);
+    if (!current) {
+      setRotationNote(`${removed.facility.name} was removed. Keys were not rotated: this device holds no keys for the record.`);
+      return;
+    }
+    try {
+      const rotated = await rotateKeys(call, recordId, removed.categories.filter((c) => current.has(c)));
+      for (const r of rotated) addRecordKey(recordId, r.category, r.version, r.key);
+      setRing(getRecordKeys(recordId));
+      setRotationNote(`${removed.facility.name} was removed and ${rotated.length} keys were rotated. New entries use keys it doesn't have.`);
+    } catch (e) {
+      setRotationNote(`${removed.facility.name} was removed, but key rotation failed: ${e instanceof Error ? e.message : "unknown error"}. Remove and retry later.`);
+    }
+  }
   const [tab, setTab] = useState<Tab>("hospitals");
   const [ring, setRing] = useState(() => getRecordKeys(recordId));
   const [removing, setRemoving] = useState<ConnectionView | null>(null);
@@ -227,6 +248,7 @@ function ManagedRecord({ recordId, own }: { recordId: string; own: boolean }) {
           </Button>
         </div>
       )}
+      <EmergencyAccess recordId={recordId} ring={ring} />
       <div className="mb-4 flex gap-1 border-b border-slate-200">
         {(
           [
@@ -310,17 +332,66 @@ function ManagedRecord({ recordId, own }: { recordId: string; own: boolean }) {
       {tab === "proposals" && <RecordProposals recordId={recordId} ring={ring} />}
       {tab === "activity" && <Activity recordId={recordId} />}
 
+      {rotationNote && <p className="mt-3 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">{rotationNote}</p>}
+
       {removing && (
         <RemoveDialog
           connection={removing}
           onClose={() => setRemoving(null)}
           onDone={() => {
+            const removed = removing;
             setRemoving(null);
-            setTick((t) => t + 1);
+            afterRemoval(removed).finally(() => setTick((t) => t + 1));
           }}
         />
       )}
     </Card>
+  );
+}
+
+// Emergency escrow: lets next of kin, family or break-glass unlock keys when the patient can't.
+function EmergencyAccess({ recordId, ring }: { recordId: string; ring: ReturnType<typeof getRecordKeys> }) {
+  const { call } = useLive();
+  const [state, setState] = useState<"loading" | "on" | "off">("loading");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    call(`/v1/records/${recordId}/escrow`)
+      .then(() => setState("on"))
+      .catch(() => setState("off"));
+  }, [call, recordId, tick]);
+
+  async function setup() {
+    if (!ring) return;
+    setBusy(true);
+    setError("");
+    try {
+      await setupEscrow(call, recordId, ring);
+      setTick((t) => t + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Setup failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (state === "loading") return null;
+  return (
+    <div className={`mb-4 flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm ${state === "on" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-sky-200 bg-sky-50 text-sky-900"}`}>
+      <span className="flex-1">
+        {state === "on"
+          ? "Emergency access is set up. If you can't consent, your keys can be released only with SehatLog + a regulator + an independent body."
+          : "Emergency access is not set up. Without it, next of kin, family and break-glass approvals can't unlock your records."}
+        {error && <span className="mt-1 block text-rose-700">{error}</span>}
+      </span>
+      {state === "off" && (
+        <Button variant="secondary" onClick={setup} disabled={!ring || busy}>
+          {busy ? "Splitting key across custodians…" : "Set up emergency access"}
+        </Button>
+      )}
+    </div>
   );
 }
 

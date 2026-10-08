@@ -54,6 +54,13 @@ export function createRecordKeys(recordId: string) {
   write(recordKey(recordId), raw);
 }
 
+/** Adds a new key version (after a rotation). */
+export function addRecordKey(recordId: string, category: string, version: number, key: Uint8Array) {
+  const raw = read<RecordKeys>(recordKey(recordId)) ?? {};
+  raw[category] = { ...(raw[category] ?? {}), [String(version)]: toHex(key) };
+  write(recordKey(recordId), raw);
+}
+
 // ---- Staff signing seed ----
 
 export const getSigningSeed = (staffId: string) => {

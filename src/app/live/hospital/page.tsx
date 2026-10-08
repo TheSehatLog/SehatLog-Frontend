@@ -7,7 +7,8 @@ import { useLive } from "@/components/live/LiveSession";
 import { Badge, Button, Card, Empty, Field, fmt, inputCls, Modal } from "@/components/ui";
 import { ApiError, fromB64, type AccessRequest, type Connection, type Entry, type Me, type WrappedKey } from "@/lib/live/api";
 import { CATEGORIES, CATEGORY_LABEL, getFacilityKey, getSigningSeed } from "@/lib/live/keystore";
-import { buildProposal, decryptEnvelope, latestKey, unwrapFacilityKeys, type KeyRing, type Payload } from "@/lib/live/records";
+import { openRelease, type ReleaseBundle } from "@/lib/live/escrow";
+import { buildProposal, decryptEnvelope, latestKey, unwrapFacilityKeys, wrapKeysForFacility, type KeyRing, type Payload } from "@/lib/live/records";
 
 type StaffMe = Extract<Me, { actor_type: "staff" }>;
 type Access =
@@ -114,8 +115,64 @@ function PatientPanel({ me, recordId, isMinor }: { me: StaffMe; recordId: string
           <RequestForm recordId={recordId} isMinor={isMinor} onSent={reload} />
         )}
       </Card>
-      {access && <EntriesPanel me={me} recordId={recordId} access={access} />}
+      {access && !access.connected && CLINICAL.includes(me.role) && <EmergencyProfile me={me} recordId={recordId} />}
+      {access && <EntriesPanel me={me} recordId={recordId} access={access} onChange={reload} />}
     </div>
+  );
+}
+
+const CLINICAL = ["Doctor", "Consultant", "Medical Director", "Nurse", "Midwife", "Paramedic"];
+
+// Releases the Basic Emergency Profile through the escrow after a fingerprint match.
+function EmergencyProfile({ me, recordId }: { me: StaffMe; recordId: string }) {
+  const { call } = useLive();
+  const [fingerprint, setFingerprint] = useState(false);
+  const [items, setItems] = useState<{ entry: Entry; payload: Payload | null }[] | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function release() {
+    setBusy(true);
+    setError("");
+    try {
+      const priv = getFacilityKey(me.facility.facility_id);
+      if (!priv) throw new Error("Load your facility key under Keys first.");
+      const bundle = await call<ReleaseBundle>(`/v1/records/${recordId}/emergency-profile`, { method: "POST", body: { fingerprint_verified: fingerprint } });
+      const ring = await openRelease(recordId, bundle, priv);
+      const { entries } = await call<{ entries: Entry[] }>(`/v1/records/${recordId}/emergency-profile/entries`);
+      setItems(await Promise.all(entries.map(async (entry) => ({ entry, payload: await decryptEnvelope(entry, ring) }))));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Release failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-xl border-2 border-rose-200 bg-white shadow-sm">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-100 bg-rose-50 px-5 py-3">
+        <h2 className="text-sm font-semibold text-rose-900">Basic Emergency Profile</h2>
+        <span className="text-xs text-rose-800">Released by SehatLog + a regulator + an independent body · logged · patient notified</span>
+      </header>
+      <div className="space-y-3 p-5 text-sm">
+        {!items ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2">
+              <input type="checkbox" className="accent-rose-700" checked={fingerprint} onChange={(e) => setFingerprint(e.target.checked)} />
+              The patient&apos;s fingerprint matched on the facility scanner
+            </label>
+            <Button variant="danger" onClick={release} disabled={!fingerprint || busy}>
+              {busy ? "Collecting escrow parts…" : "Release emergency profile"}
+            </Button>
+          </div>
+        ) : items.length === 0 ? (
+          <Empty>No Basic Emergency Profile entries recorded.</Empty>
+        ) : (
+          items.map((it) => <EntryView key={it.entry.entry_id} env={it.entry} payload={it.payload} version={it.entry.version} status={it.entry.status} />)
+        )}
+        {error && <p className="text-rose-600">{error}</p>}
+      </div>
+    </section>
   );
 }
 
@@ -238,9 +295,29 @@ function PendingRequest({ me, request, onChange }: { me: StaffMe; request: Acces
   );
 }
 
-function EntriesPanel({ me, recordId, access }: { me: StaffMe; recordId: string; access: Access }) {
+function EntriesPanel({ me, recordId, access, onChange }: { me: StaffMe; recordId: string; access: Access; onChange: () => void }) {
   const { call } = useLive();
   const facilityPriv = getFacilityKey(me.facility.facility_id);
+  const [unlocking, setUnlocking] = useState(false);
+
+  // NOK, family and break-glass connections get their keys from the escrow: collect the
+  // parts, open the keys, re-wrap them to this facility and store them.
+  async function unlock() {
+    if (!access.connected || !facilityPriv) return;
+    setUnlocking(true);
+    setError("");
+    try {
+      const con = access.connection;
+      const bundle = await call<ReleaseBundle>(`/v1/connections/${con.connection_id}/escrow-release`);
+      const escrowRing = await openRelease(recordId, bundle, facilityPriv);
+      const keys = await wrapKeysForFacility(recordId, escrowRing, con.categories, fromB64(me.facility.public_key));
+      await call(`/v1/connections/${con.connection_id}/keys`, { method: "POST", body: { keys } });
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unlock failed");
+      setUnlocking(false);
+    }
+  }
   const [ring, setRing] = useState<KeyRing | null>(null);
   const [items, setItems] = useState<{ entry: Entry; payload: Payload | null }[] | null>(null);
   const [proposing, setProposing] = useState<{ amends?: { entry: Entry; payload: Payload | null } } | null>(null);
@@ -283,12 +360,19 @@ function EntriesPanel({ me, recordId, access }: { me: StaffMe; recordId: string;
     >
       {error && <p className="mb-2 text-sm text-rose-600">{error}</p>}
       {access.connected && access.keys.length === 0 && (
-        <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          Connected, but no keys were shared with your facility.{" "}
-          {["nok", "family", "break_glass"].includes(access.connection.granted_by_type)
-            ? "They come from the emergency escrow (custodian service not running in this build)."
-            : "The approver's device held no keys for this record."}
-        </p>
+        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <span className="flex-1">
+            Connected, but no keys are stored for your facility yet.{" "}
+            {["nok", "family", "break_glass"].includes(access.connection.granted_by_type)
+              ? `Approved by ${access.connection.granted_by_type.replace("_", "-")}: the keys come from the emergency escrow.`
+              : "The approver's device held no keys for this record."}
+          </span>
+          {["nok", "family", "break_glass"].includes(access.connection.granted_by_type) && (
+            <Button variant="secondary" onClick={unlock} disabled={unlocking || !facilityPriv}>
+              {unlocking ? "Collecting escrow parts…" : "Unlock keys from emergency escrow"}
+            </Button>
+          )}
+        </div>
       )}
       {!items ? (
         <p className="text-sm text-slate-500">Decrypting…</p>
@@ -359,7 +443,8 @@ function ProposeDialog({
     setMsg("");
     try {
       if (!seed || !me.signing_public_key) throw new Error("Register your signing key under Keys first.");
-      const k = amends ? { version: amends.entry.key_version, key: ring.get(category)?.get(amends.entry.key_version) } : latestKey(ring, category);
+      // Always the newest key version: the API rejects entries under a rotated-out key.
+      const k = latestKey(ring, category);
       if (!k?.key) throw new Error("No key for this category on this device.");
       const body = await buildProposal({
         recordId,
