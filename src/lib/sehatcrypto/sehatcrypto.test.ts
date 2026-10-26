@@ -83,6 +83,58 @@ test("merge_signature", async () => {
   }
 });
 
+test("file_seal", async () => {
+  for (const c of v.file_seal) {
+    const sealed = await sc.sealFile(hex(c.key), hex(c.nonce), hex(c.plaintext), c.record_id, c.file_id, c.category);
+    assert.equal(toHex(sealed), c.sealed);
+    assert.equal(toHex(await sc.openFile(hex(c.key), hex(c.sealed), c.record_id, c.file_id, c.category)), c.plaintext);
+    await rejects(sc.openFile(hex(c.key), hex(c.sealed), "rec_other", c.file_id, c.category));
+  }
+});
+
+test("text_seal", async () => {
+  for (const c of v.text_seal) {
+    assert.equal(toHex(await sc.sealText(hex(c.content_key), hex(c.nonce), c.text_utf8, c.purpose, c.record_id)), c.sealed);
+    const pub = await sc.x25519PublicKey(hex(c.recipient_private));
+    assert.equal(toHex(await sc.wrapToPublicKey(pub, sc.textContext(c.purpose, c.record_id), hex(c.content_key), hex(c.ephemeral_private))), c.wrapped);
+    const key = await sc.unwrapWithPrivateKey(hex(c.recipient_private), sc.textContext(c.purpose, c.record_id), hex(c.wrapped));
+    assert.equal(await sc.openText(key, hex(c.sealed), c.purpose, c.record_id), c.text_utf8);
+    await rejects(sc.openText(key, hex(c.sealed), "review-comment", c.record_id));
+  }
+});
+
+test("consent_signature", async () => {
+  for (const c of v.consent_signature) {
+    const con = {
+      action: c.action as "approve",
+      subjectId: c.subject_id,
+      recordId: c.record_id,
+      signerId: c.signer_id,
+      level: c.level,
+      categories: c.categories,
+      durationHours: c.duration_hours,
+    };
+    assert.equal(sc.consentStatement(con), c.statement_utf8);
+    assert.equal(toHex(await sc.signConsent(hex(c.seed), con)), c.signature);
+    assert.equal(toHex(await sc.ed25519PublicKey(hex(c.seed))), c.public_key);
+    assert.ok(await sc.verifyConsent(hex(c.public_key), c.statement_utf8, hex(c.signature)));
+    assert.ok(!(await sc.verifyConsent(hex(c.public_key), c.statement_utf8.replace("record=", "record=x"), hex(c.signature))));
+  }
+});
+
+test("key_backup", async () => {
+  for (const c of v.key_backup) {
+    const code = hex(c.code);
+    assert.equal(sc.encodeRecoveryCode(code), c.code_text);
+    assert.equal(toHex(sc.decodeRecoveryCode(c.typed_as)), c.code);
+    assert.throws(() => sc.decodeRecoveryCode(c.code_text.slice(0, 30)));
+    assert.equal(toHex(await sc.backupKey(code, c.record_id)), c.backup_key);
+    assert.equal(toHex(await sc.sealBackup(code, hex(c.nonce), new TextEncoder().encode(c.plaintext_utf8) as Uint8Array<ArrayBuffer>, c.record_id)), c.sealed);
+    assert.equal(new TextDecoder().decode(await sc.openBackup(code, hex(c.sealed), c.record_id)), c.plaintext_utf8);
+    await rejects(sc.openBackup(code, hex(c.sealed), "rec_other"));
+  }
+});
+
 test("escrow", async () => {
   for (const c of v.escrow) {
     const k = sc.combineEscrowParts(hex(c.s), hex(c.r), hex(c.i));

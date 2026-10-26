@@ -126,6 +126,75 @@
       "signature": "84dfc31bdb513e17639ffdb5a2ffeaf5a6b088ed7e997b5e456819b96ec21b20cf18852cde62c38ec18a35633a0996e39e40eddc70118323121f91a43d934602"
     }
   ],
+  "file_seal": [
+    {
+      "key": "ffb638164891847085dc75c2b9e2afedc2b49b9ab3d552fd0d692988ccd33ef2",
+      "nonce": "25009f217e653826471d73fa",
+      "record_id": "rec_7f3a91",
+      "file_id": "fil_0a1b2c3d4e5f6071",
+      "category": "imaging",
+      "plaintext": "3d4ac67fd4eb71b29058bda4995dd37d5497427e690096f630dae37be122a2f08a77f3e0aecb83a5d6e08b7ddcba5c277122bf45f5c66a7e9ff4a570f29162ea8bc1bc6471a6e5e3c1361e3516036c47965dd090ebc690501131c93b2a954d251aabb6fa69435ed0986930840732e2cfd36c3cb6ea8ac2305d247771bac4ac5b382d90666052d57abbb7e8bc3dbd05b8ee9504f86d689cffd0e4b181c38d51b81f1cd0447e6acb2b4a948a5c9a4547b0c1358ee8003a15d39b349ecb075d2a37a682363294ece4c4ea969f0a59c522f3ccab7621dfce4288d2ff8e03d4c3413dae3a76e81cac77d6608fb4f4472d5218babcec3176b6572d467b2166da465b43c6784c7aee8404af9fa0099de3d326625769bc319c80ba7d3b17458147333e6a2d3c5e4242ffb0dd029eacc7",
+      "sealed": "25009f217e653826471d73fa3f7c95ec61120ec678c3e77fdc49609181ffe03dac9c32f2861fb3b05f7b5b66f3c29981c969a0a0b79a059022d665b2792e1518edf425ebf6f8284a8c12ded8f927c9aa7b7ef9f9c52eb12111fbe1923d7eb872cd81d72bac97f7c11c0cec5a3e3bb04d8d5ee19c81295d6c25b7c1f60aee4bec02cbbc539aec6690a4472a934a91844f2aaaa8cd6ea1e7c8039fa733ef2eacb0b534b170f6b2f07a47a199126fa7a1fc9bfbd13a1031e276fc8bc9a5f0c6602b68fc0234e5bc699a0e78728b7789d2a28dedaa2bd4d2139ed517f5fe6edfc679eb8d4af98cde57458a10303ba924c73c5df637041b3952efed14535268dfa177268eacb255bae519abf4b6f4021a598c280384fbdfce3fb6123588b8d31d1afe3e5c649ac6e88ba64ba9b95ca6fc23d78f793ad4dd272bdf2e8bb1558ada4e047ba98f7d805d47a3"
+    }
+  ],
+  "text_seal": [
+    {
+      "content_key": "3b2caea74c7dd2a281d3ddc0df54010a327ee0b204d3811473ecfbeb3039871c",
+      "nonce": "0f56382fb101bbaf9d5b041c",
+      "purpose": "request-reason",
+      "record_id": "rec_7f3a91",
+      "text_utf8": "{\"reason\":\"Road traffic accident\",\"incapacity\":\"Unconscious\"}",
+      "sealed": "0f56382fb101bbaf9d5b041ca4eb86b6e2b0b39f5db8f928b3b7322fde373c78e261575c15ba61a59c89621318e1ed147a95f68f5a456a4e5a27960d82448b16fb669b71d4f08658f752a600fa34bc9bb78cfef3992a22ce5d",
+      "recipient_private": "2e0cc7d0662e0173b9f71cf1370b0ed204e0f0aba0460317deac0876bb8f74cc",
+      "ephemeral_private": "909d952e46a335b8832bdd2bbd009c4f4ae70897e7ddd6a41601bf56efcfe1d8",
+      "wrapped": "bbbf792ae92657e4bedf48ba00fed43f428a31a89de17172d672260f27802961e743521bfdefa7d1b3b4460e0c7dca2c5c2f17d3786411a7175d0606cba98d71b69217487d94a2a6"
+    }
+  ],
+  "consent_signature": [
+    {
+      "seed": "211fc6b94a8f4d7ea89a33e34b2b25c49c8c1085a69e41c3a1f2179c5a168af7",
+      "public_key": "68859aca403ed9916b3b1c5f11876150303f7289087569fe7180ac5683aaf241",
+      "action": "approve",
+      "subject_id": "req_9c2e14",
+      "record_id": "rec_7f3a91",
+      "signer_id": "ctz_aisha",
+      "level": "scoped",
+      "categories": [
+        "labs",
+        "basic",
+        "clinical",
+        "labs"
+      ],
+      "duration_hours": 168,
+      "statement_utf8": "sehatlog/v1/consent\naction=approve\nsubject=req_9c2e14\nrecord=rec_7f3a91\nsigner=ctz_aisha\nlevel=scoped\ncategories=basic,clinical,labs\nduration_hours=168",
+      "signature": "e0b84fcbd329dec5d8b8a0705e8abb22c0b4a3b717d3707f6c1db531dd76ad8e165498be7ec795182407f491179d17f259efd82021bd25cea692d12a6b717709"
+    },
+    {
+      "seed": "211fc6b94a8f4d7ea89a33e34b2b25c49c8c1085a69e41c3a1f2179c5a168af7",
+      "public_key": "68859aca403ed9916b3b1c5f11876150303f7289087569fe7180ac5683aaf241",
+      "action": "remove",
+      "subject_id": "con_51d0aa",
+      "record_id": "rec_7f3a91",
+      "signer_id": "ctz_aisha",
+      "level": "",
+      "categories": null,
+      "duration_hours": 0,
+      "statement_utf8": "sehatlog/v1/consent\naction=remove\nsubject=con_51d0aa\nrecord=rec_7f3a91\nsigner=ctz_aisha\nlevel=\ncategories=\nduration_hours=0",
+      "signature": "016e68540fcfd6f1a15ed45cda83192f921e901c6435063794c168a1be1620d81a7bcb4d97ab44b349117ad514f80165b2d154ea8ce478d410245b5cac80370a"
+    }
+  ],
+  "key_backup": [
+    {
+      "code": "f695e13471f40b24c39f720564d9d83068b22c4a",
+      "code_text": "YTAY-2D3H-YG5J-9GWZ-E82P-9PER-61MB-4B2A",
+      "typed_as": "ytay 2d3h yg5j 9gwz e82p 9per 6lmb 4b2a",
+      "record_id": "rec_7f3a91",
+      "backup_key": "a522f70b6aa1752539b83528a9d9b0ea4d34c260b7caf5effcd8a2768aa21b4c",
+      "nonce": "269c71b20508ba1d079985a8",
+      "plaintext_utf8": "{\"v\":1,\"keys\":{\"clinical\":{\"1\":\"3WYeeSnC2tNdo6QhQwH21IAxrqp5bSYYVdVCqRD/t+Q=\"}}}",
+      "sealed": "269c71b20508ba1d079985a8229a5399ec7fa71c1ae5ff9c040bbb4683160d3db0abe280203c56c3599d4927bef276d9581ce21ae382ea2ab33d87b9ae66ebb23898a60a2883400a95215060df98f60d6ef1d15ee6ac0355a6870906b02cf1ba36e0054595f5905b9fce2df5"
+    }
+  ],
   "escrow": [
     {
       "record_id": "rec_7f3a91",

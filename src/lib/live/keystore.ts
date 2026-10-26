@@ -61,6 +61,49 @@ export function addRecordKey(recordId: string, category: string, version: number
   write(recordKey(recordId), raw);
 }
 
+/** Replaces the ring (after a restore). */
+export function setRecordKeys(recordId: string, ring: Map<string, Map<number, Uint8Array>>) {
+  const raw: RecordKeys = {};
+  for (const [cat, vers] of ring) raw[cat] = Object.fromEntries([...vers].map(([v, k]) => [String(v), toHex(k)]));
+  write(recordKey(recordId), raw);
+}
+
+// ---- Recovery code: kept on this device so later key changes re-upload the backup ----
+
+export const getRecoveryCode = (recordId: string) => {
+  const h = read<string>(`sehatlog.keys.recovery.${recordId}`);
+  return h ? fromHex(h) : null;
+};
+export const setRecoveryCode = (recordId: string, code: Uint8Array) => write(`sehatlog.keys.recovery.${recordId}`, toHex(code));
+
+// ---- Citizen device key (X25519): sealed reasons, comments and dispute text ----
+
+export type DeviceKey = { keyId: string; priv: Uint8Array<ArrayBuffer> };
+
+export function getDeviceKey(citizenId: string): DeviceKey | null {
+  const v = read<{ keyId: string; priv: string }>(`sehatlog.keys.device.${citizenId}`);
+  return v ? { keyId: v.keyId, priv: fromHex(v.priv) } : null;
+}
+
+/** Returns this browser's device key for the citizen, creating it on first use. */
+export function ensureDeviceKey(citizenId: string): DeviceKey {
+  const existing = getDeviceKey(citizenId);
+  if (existing) return existing;
+  const k = { keyId: "web-" + toHex(crypto.getRandomValues(new Uint8Array(6))), priv: crypto.getRandomValues(new Uint8Array(32)) };
+  write(`sehatlog.keys.device.${citizenId}`, { keyId: k.keyId, priv: toHex(k.priv) });
+  return k;
+}
+
+/** This browser's Ed25519 seed for signing consents (crypto spec section 9), same key id as the device key. */
+export function ensureDeviceSigningKey(citizenId: string): { keyId: string; seed: Uint8Array<ArrayBuffer> } {
+  const { keyId } = ensureDeviceKey(citizenId);
+  const h = read<string>(`sehatlog.keys.devsign.${citizenId}`);
+  if (h) return { keyId, seed: fromHex(h) };
+  const seed = crypto.getRandomValues(new Uint8Array(32));
+  write(`sehatlog.keys.devsign.${citizenId}`, toHex(seed));
+  return { keyId, seed };
+}
+
 // ---- Staff signing seed ----
 
 export const getSigningSeed = (staffId: string) => {

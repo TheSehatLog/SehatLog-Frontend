@@ -3,12 +3,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { EntryView } from "@/components/live/EntryView";
 import { useLive } from "@/components/live/LiveSession";
+import { KeyRecovery, refreshBackup } from "@/components/live/KeyRecovery";
+import { Sealed } from "@/components/live/Sealed";
+import { StepUpFields, useSendCode, useStepUp } from "@/components/live/SecondFactor";
 import { Badge, Button, Card, Empty, Field, fmt, inputCls, Modal } from "@/components/ui";
-import { ApiError, fromB64, type AuditEvent, type ConnectionView, type Entry, type Proposal, type RequestView } from "@/lib/live/api";
-import { addRecordKey, CATEGORIES, CATEGORY_LABEL, createRecordKeys, getRecordKeys } from "@/lib/live/keystore";
+import { ApiError, fromB64, type AuditEvent, type Dispute, type ConnectionView, type Entry, type Proposal, type RequestView } from "@/lib/live/api";
+import { addRecordKey, CATEGORIES, CATEGORY_LABEL, createRecordKeys, ensureDeviceKey, getRecordKeys } from "@/lib/live/keystore";
+import { deviceSignature, verifySignedConsent, type SignedConsent } from "@/lib/live/consent";
+import { receiveSharedKeys, shareRecordKeys } from "@/lib/live/sharing";
 import { rotateKeys } from "@/lib/live/rotation";
 import { setupEscrow } from "@/lib/live/escrow";
+import { parseRequestReason, sealToFacilityAndCircle } from "@/lib/live/sealed";
 import { decryptEnvelope, wrapKeysForFacility, type Payload } from "@/lib/live/records";
+
+type MyRecord = { record_id: string; relation: "self" | "guardian" | "nok" | "family"; is_minor: boolean };
 
 const ACTING: Record<RequestView["acting_as"], string> = {
   self: "Request to access your record",
@@ -25,6 +33,14 @@ export default function CitizenDashboard() {
   const [tick, setTick] = useState(0);
   const reload = () => setTick((t) => t + 1);
 
+  const [mine, setMine] = useState<MyRecord[] | null>(null);
+  useEffect(() => {
+    if (me?.actor_type !== "citizen") return;
+    call<{ records: MyRecord[] }>("/v1/me/records")
+      .then((r) => setMine(r.records))
+      .catch(() => setMine([]));
+  }, [me, call]);
+
   useEffect(() => {
     if (me?.actor_type !== "citizen") return;
     call<{ requests: RequestView[] }>("/v1/me/access-requests")
@@ -33,11 +49,20 @@ export default function CitizenDashboard() {
   }, [me, call, tick]);
 
   if (me?.actor_type !== "citizen") return <Empty>Sign in as a citizen to see your dashboard.</Empty>;
-  const records = Array.from(new Set([me.record_id, ...me.acts_for_records]));
+  // Records you manage (yours, children in your care) get the full view; records where you
+  // are next of kin or family only reach you as requests while the patient can't consent.
+  const managed = (mine ?? []).filter((r) => r.relation === "self" || r.relation === "guardian");
+  const listed = (mine ?? []).filter((r) => r.relation === "nok" || r.relation === "family");
 
   async function decline(r: RequestView) {
+    if (me?.actor_type !== "citizen") return;
     try {
-      await call(`/v1/access-requests/${r.request_id}/decline`, { method: "POST" });
+      // Signed on this device when it has a registered key; otherwise a plain decline.
+      const device_signature = await deviceSignature({ action: "decline", subjectId: r.request_id, recordId: r.record_id, signerId: me.id });
+      await call(`/v1/access-requests/${r.request_id}/decline`, { method: "POST", body: { device_signature } }).catch((e) => {
+        if (e instanceof ApiError && e.status === 412) return call(`/v1/access-requests/${r.request_id}/decline`, { method: "POST" });
+        throw e;
+      });
       reload();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Decline failed");
@@ -66,8 +91,21 @@ export default function CitizenDashboard() {
                       {r.facility.address} · HFR {r.facility.hfr_id} · {r.facility.type}
                     </p>
                     <p className="mt-1 text-sm text-slate-800">
-                      Reason: {r.reason}
-                      {r.incapacity_reason && <> · Patient status: {r.incapacity_reason}</>}
+                      Reason:{" "}
+                      <Sealed
+                        value={r.reason_sealed}
+                        purpose="request-reason"
+                        recordId={r.record_id}
+                        render={(t) => {
+                          const v = parseRequestReason(t);
+                          return (
+                            <>
+                              {v?.reason}
+                              {v?.incapacity && <> · Patient status: {v.incapacity}</>}
+                            </>
+                          );
+                        }}
+                      />
                     </p>
                     <p className="text-sm text-slate-600">
                       Record {r.record_id} · asks for {r.categories.map((c) => CATEGORY_LABEL[c] ?? c).join(", ")}
@@ -87,9 +125,26 @@ export default function CitizenDashboard() {
         )}
       </Card>
 
-      {records.map((id) => (
-        <ManagedRecord key={id + tick} recordId={id} own={id === me.record_id} />
+      {mine === null && <p className="text-sm text-slate-500">Loading your records…</p>}
+      {managed.map((r) => (
+        <ManagedRecord key={r.record_id + tick} recordId={r.record_id} own={r.relation === "self"} isMinor={r.is_minor} />
       ))}
+      {listed.length > 0 && (
+        <Card title="People who list you">
+          <ul className="space-y-2 text-sm">
+            {listed.map((r) => (
+              <li key={r.record_id} className="flex flex-wrap items-center gap-2">
+                <Badge tone={r.relation === "nok" ? "violet" : "slate"}>{r.relation === "nok" ? "Next of kin" : "Family"}</Badge>
+                <span className="font-mono text-xs text-slate-600">{r.record_id}</span>
+                <span className="text-slate-600">
+                  You are asked to approve hospital access only if this person can&apos;t consent
+                  {r.relation === "family" ? " and their next of kin can't be reached" : ""}.
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {approving && (
         <ApproveDialog
@@ -106,14 +161,14 @@ export default function CitizenDashboard() {
 }
 
 function ApproveDialog({ request, onClose, onDone }: { request: RequestView; onClose: () => void; onDone: () => void }) {
-  const { call } = useLive();
+  const { call, me } = useLive();
   const usesOwnKeys = request.acting_as === "self" || request.acting_as === "guardian";
   const ring = usesOwnKeys ? getRecordKeys(request.record_id) : null;
   const [level, setLevel] = useState<"full" | "scoped">(request.categories.length > 3 ? "full" : "scoped");
   const [cats, setCats] = useState<string[]>(request.categories.filter((c) => c !== "basic" && c !== "sensitive"));
   const [duration, setDuration] = useState(0);
-  const [pw, setPw] = useState("");
-  const [code, setCode] = useState("");
+  const step = useStepUp();
+  const sendCode = useSendCode();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -124,9 +179,21 @@ function ApproveDialog({ request, onClose, onDone }: { request: RequestView; onC
       const granted = level === "full" ? CATEGORIES.filter((c) => c !== "sensitive" || cats.includes("sensitive")) : ["basic", ...cats];
       const wrapped =
         ring && request.facility.public_key ? await wrapKeysForFacility(request.record_id, ring, granted, fromB64(request.facility.public_key)) : [];
+      if (me?.actor_type !== "citizen") return;
+      const categories = granted.filter((c) => c !== "basic");
+      // This device signs exactly what is granted (crypto spec section 9).
+      const device_signature = await deviceSignature({
+        action: "approve",
+        subjectId: request.request_id,
+        recordId: request.record_id,
+        signerId: me.id,
+        level,
+        categories,
+        durationHours: duration,
+      });
       await call(`/v1/access-requests/${request.request_id}/approve`, {
         method: "POST",
-        body: { password: pw, totp_code: code, level, categories: granted.filter((c) => c !== "basic"), duration_hours: duration, wrapped_keys: wrapped },
+        body: { ...step.body, level, categories, duration_hours: duration, wrapped_keys: wrapped, device_signature },
       });
       onDone();
     } catch (e) {
@@ -171,20 +238,14 @@ function ApproveDialog({ request, onClose, onDone }: { request: RequestView; onC
               ? "The granted keys will be encrypted to this hospital's public key in your browser."
               : "This device has no keys for the record, so the hospital will be connected but unable to read anything until keys are shared."}
         </p>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Password">
-            <input type="password" className={inputCls} value={pw} onChange={(e) => setPw(e.target.value)} />
-          </Field>
-          <Field label="Authenticator code">
-            <input inputMode="numeric" maxLength={6} className={`${inputCls} font-mono`} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
-          </Field>
-        </div>
+        <StepUpFields {...step.props} send={sendCode} />
+        <p className="text-xs text-slate-500">Your approval is signed with this device&apos;s key, so the hospital and you can prove what you agreed to.</p>
         {error && <p className="text-sm text-rose-600">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={approve} disabled={busy || !pw || code.length !== 6 || (level === "scoped" && cats.length === 0)}>
+          <Button onClick={approve} disabled={busy || !step.ready || (level === "scoped" && cats.length === 0)}>
             {busy ? "Approving…" : "Approve"}
           </Button>
         </div>
@@ -193,10 +254,41 @@ function ApproveDialog({ request, onClose, onDone }: { request: RequestView; onC
   );
 }
 
-type Tab = "hospitals" | "record" | "proposals" | "activity";
+type Tab = "hospitals" | "record" | "proposals" | "disputes" | "consents" | "activity";
 
-function ManagedRecord({ recordId, own }: { recordId: string; own: boolean }) {
-  const { call } = useLive();
+function ManagedRecord({ recordId, own, isMinor }: { recordId: string; own: boolean; isMinor: boolean }) {
+  const { call, me } = useLive();
+  const [ring, setRing] = useState(() => getRecordKeys(recordId));
+  const citizenId = me?.actor_type === "citizen" ? me.id : "";
+  const [shareNote, setShareNote] = useState("");
+
+  // Keys a co-guardian (or this citizen's other device) shared with this browser.
+  useEffect(() => {
+    if (!citizenId) return;
+    receiveSharedKeys(call, recordId, citizenId, ensureDeviceKey(citizenId), getRecordKeys(recordId))
+      .then((n) => {
+        if (n > 0) {
+          setRing(getRecordKeys(recordId));
+          setShareNote(`${n} key${n > 1 ? "s" : ""} received from ${isMinor ? "a co-guardian" : "your other device"}.`);
+          refreshBackup(call, recordId, getRecordKeys(recordId)).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }, [call, recordId, citizenId, isMinor]);
+
+  async function share(r = getRecordKeys(recordId)) {
+    if (!r || !citizenId) return;
+    try {
+      const n = await shareRecordKeys(call, recordId, r, `${citizenId}:${ensureDeviceKey(citizenId).keyId}`);
+      setShareNote(
+        n === 0
+          ? `No other ${isMinor ? "guardian" : ""} device has signed in yet. They need to sign in once, then share again.`
+          : `Keys shared with ${n} other device${n > 1 ? "s" : ""}${isMinor ? " of this child's guardians" : ""}.`,
+      );
+    } catch (e) {
+      setShareNote(`Sharing failed: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
+  }
   const [connections, setConnections] = useState<ConnectionView[] | null | "forbidden">(null);
   const [rotationNote, setRotationNote] = useState("");
 
@@ -212,13 +304,14 @@ function ManagedRecord({ recordId, own }: { recordId: string; own: boolean }) {
       const rotated = await rotateKeys(call, recordId, removed.categories.filter((c) => current.has(c)));
       for (const r of rotated) addRecordKey(recordId, r.category, r.version, r.key);
       setRing(getRecordKeys(recordId));
+      await share(getRecordKeys(recordId)); // co-guardians and other devices need the new versions too
+      await refreshBackup(call, recordId, getRecordKeys(recordId)); // and the recovery backup
       setRotationNote(`${removed.facility.name} was removed and ${rotated.length} keys were rotated. New entries use keys it doesn't have.`);
     } catch (e) {
       setRotationNote(`${removed.facility.name} was removed, but key rotation failed: ${e instanceof Error ? e.message : "unknown error"}. Remove and retry later.`);
     }
   }
   const [tab, setTab] = useState<Tab>("hospitals");
-  const [ring, setRing] = useState(() => getRecordKeys(recordId));
   const [removing, setRemoving] = useState<ConnectionView | null>(null);
   const [tick, setTick] = useState(0);
 
@@ -233,10 +326,28 @@ function ManagedRecord({ recordId, own }: { recordId: string; own: boolean }) {
   const previous = Array.isArray(connections) ? connections.filter((c) => !c.active) : [];
 
   return (
-    <Card title={own ? `My record (${recordId})` : `Record ${recordId} (in your care)`}>
+    <Card
+      title={
+        <span className="flex flex-wrap items-center gap-2">
+          {own ? `My record (${recordId})` : `Record ${recordId}`}
+          {!own && <Badge tone="amber">{isMinor ? "Child in your care · guardian" : "Guardian"}</Badge>}
+        </span>
+      }
+      action={
+        ring && (
+          <Button variant="ghost" onClick={() => share()}>
+            {isMinor ? "Share keys with co-guardians" : "Share keys with my devices"}
+          </Button>
+        )
+      }
+    >
+      {shareNote && <p className="mb-3 rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-900">{shareNote}</p>}
       {!ring && (
         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          <span className="flex-1">This device holds no keys for this record. Create them here to approve hospitals with keys and read entries.</span>
+          <span className="flex-1">
+            New record with no keys anywhere yet? Create them here. If {isMinor ? "another guardian" : "another of your devices"} has them, choose &ldquo;Share
+            keys&rdquo; there instead; they&apos;ll arrive here.
+          </span>
           <Button
             variant="secondary"
             onClick={() => {
@@ -248,6 +359,7 @@ function ManagedRecord({ recordId, own }: { recordId: string; own: boolean }) {
           </Button>
         </div>
       )}
+      <KeyRecovery recordId={recordId} ring={ring} onRing={() => setRing(getRecordKeys(recordId))} />
       <EmergencyAccess recordId={recordId} ring={ring} />
       <div className="mb-4 flex gap-1 border-b border-slate-200">
         {(
@@ -255,6 +367,8 @@ function ManagedRecord({ recordId, own }: { recordId: string; own: boolean }) {
             ["hospitals", `Connected hospitals (${active.length})`],
             ["record", "Health record"],
             ["proposals", "Proposals"],
+            ["disputes", "Disputes"],
+            ["consents", "Signed consents"],
             ["activity", "Activity log"],
           ] as const
         ).map(([id, label]) => (
@@ -330,6 +444,8 @@ function ManagedRecord({ recordId, own }: { recordId: string; own: boolean }) {
 
       {tab === "record" && <RecordEntries recordId={recordId} ring={ring} />}
       {tab === "proposals" && <RecordProposals recordId={recordId} ring={ring} />}
+      {tab === "disputes" && <RecordDisputes recordId={recordId} />}
+      {tab === "consents" && <Consents recordId={recordId} />}
       {tab === "activity" && <Activity recordId={recordId} />}
 
       {rotationNote && <p className="mt-3 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">{rotationNote}</p>}
@@ -416,14 +532,104 @@ function useDecrypted<T extends Entry | Proposal>(path: string, key: "entries" |
 
 function RecordEntries({ recordId, ring }: { recordId: string; ring: ReturnType<typeof getRecordKeys> }) {
   const items = useDecrypted<Entry>(`/v1/records/${recordId}/entries`, "entries", ring);
+  const [disputing, setDisputing] = useState<Entry | null>(null);
   if (!items) return <p className="text-sm text-slate-500">Loading…</p>;
   if (items.length === 0) return <Empty>No entries yet.</Empty>;
   return (
     <div className="space-y-3">
       {[...items].reverse().map(({ item, payload }) => (
-        <EntryView key={item.entry_id} env={item} payload={payload} version={item.version} status={item.status} />
+        <EntryView
+          key={item.entry_id}
+          env={item}
+          payload={payload}
+          version={item.version}
+          status={item.status}
+          actions={
+            item.status === "current" ? (
+              <button className="text-xs font-medium text-rose-700 hover:underline" onClick={() => setDisputing(item)}>
+                Dispute
+              </button>
+            ) : null
+          }
+        />
       ))}
+      {disputing && <DisputeDialog entry={disputing} onClose={() => setDisputing(null)} />}
     </div>
+  );
+}
+
+// Challenge an entry; the Medical Director of the hospital that wrote it reviews.
+function DisputeDialog({ entry, onClose }: { entry: Entry; onClose: () => void }) {
+  const { call } = useLive();
+  const [reason, setReason] = useState("");
+  const [msg, setMsg] = useState("");
+  const [done, setDone] = useState(false);
+  async function send() {
+    setMsg("");
+    try {
+      // Sealed to the hospital that wrote the entry and the record's circle.
+      const reason_sealed = await sealToFacilityAndCircle(call, reason, "dispute-reason", entry.record_id, entry.facility_id);
+      await call(`/v1/entries/${entry.entry_id}/disputes`, { method: "POST", body: { reason_sealed } });
+      setDone(true);
+      setMsg("Dispute sent. The Medical Director of the hospital that wrote this entry will review it, and you'll be notified of the outcome.");
+    } catch (e) {
+      setMsg(e instanceof ApiError ? e.message : "Could not send the dispute");
+    }
+  }
+  return (
+    <Modal open title="Dispute this entry" onClose={onClose}>
+      <div className="space-y-3 text-sm">
+        <Field label="What is wrong?" hint="Up to 500 characters. Encrypted: only the hospital's reviewers and your family circle can read it.">
+          <textarea className={inputCls} rows={4} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} disabled={done} />
+        </Field>
+        {msg && <p className="text-slate-700">{msg}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            {done ? "Close" : "Cancel"}
+          </Button>
+          {!done && (
+            <Button onClick={send} disabled={!reason.trim()}>
+              Send dispute
+            </Button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function RecordDisputes({ recordId }: { recordId: string }) {
+  const { call } = useLive();
+  const [list, setList] = useState<Dispute[] | null>(null);
+  useEffect(() => {
+    call<{ disputes: Dispute[] }>(`/v1/records/${recordId}/disputes`)
+      .then((r) => setList(r.disputes))
+      .catch(() => setList([]));
+  }, [call, recordId]);
+  if (!list) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (list.length === 0) return <Empty>No disputes. Use “Dispute” on any entry you believe is wrong.</Empty>;
+  return (
+    <ul className="space-y-2 text-sm">
+      {list.map((d) => (
+        <li key={d.dispute_id} className="rounded-lg border border-slate-200 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={d.status === "open" ? "amber" : d.status === "amended" ? "teal" : "slate"}>
+              {d.status === "open" ? "Under review" : d.status === "amended" ? "Corrected" : "Entry upheld"}
+            </Badge>
+            <span className="font-mono text-xs text-slate-500">{d.entry_id}</span>
+            <span className="text-xs text-slate-500">{fmt(Date.parse(d.created_at))}</span>
+          </div>
+          <p className="mt-1 text-slate-800">
+            <Sealed value={d.reason_sealed} purpose="dispute-reason" recordId={d.record_id} render={(t) => <>“{t}”</>} />
+          </p>
+          {d.resolution_sealed && (
+            <p className="mt-1 text-slate-600">
+              Medical Director: <Sealed value={d.resolution_sealed} purpose="dispute-resolution" recordId={d.record_id} />
+            </p>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -439,10 +645,58 @@ function RecordProposals({ recordId, ring }: { recordId: string; ring: ReturnTyp
           env={item}
           payload={payload}
           badge={<Badge tone={item.status === "open" ? "amber" : item.status === "merged" ? "teal" : "rose"}>{item.status.replace("_", " ")}</Badge>}
-          footer={item.review_comment && <p className="mt-1 text-xs text-slate-600">Reviewer: “{item.review_comment}”</p>}
+          footer={
+            item.review_comment_sealed && (
+              <p className="mt-1 text-xs text-slate-600">
+                Reviewer: <Sealed value={item.review_comment_sealed} purpose="review-comment" recordId={item.record_id} render={(t) => <>“{t}”</>} />
+              </p>
+            )
+          }
         />
       ))}
     </div>
+  );
+}
+
+// Every approval, decline and removal, with the device signature checked here in the browser.
+function Consents({ recordId }: { recordId: string }) {
+  const { call } = useLive();
+  const [list, setList] = useState<(SignedConsent & { ok: boolean })[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    call<{ consents: SignedConsent[] }>(`/v1/records/${recordId}/consents`)
+      .then(async (r) => Promise.all(r.consents.map(async (c) => ({ ...c, ok: await verifySignedConsent(c) }))))
+      .then((v) => live && setList(v))
+      .catch(() => live && setList([]));
+    return () => {
+      live = false;
+    };
+  }, [call, recordId]);
+  if (!list) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (list.length === 0) return <Empty>No signed consents yet.</Empty>;
+  return (
+    <ul className="space-y-2 text-sm">
+      {[...list].reverse().map((c) => {
+        const f = Object.fromEntries(c.statement.split("\n").slice(1).map((l) => l.split("=") as [string, string]));
+        return (
+          <li key={c.id} className="rounded-lg border border-slate-200 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={c.action === "approve" ? "teal" : c.action === "remove" ? "rose" : "slate"}>{c.action}</Badge>
+              <span className="text-slate-700">
+                {c.action === "remove" ? `connection ${f.subject}` : `request ${f.subject}`}
+                {f.level && ` · ${f.level}`}
+                {f.categories && ` · ${f.categories.split(",").map((x) => CATEGORY_LABEL[x] ?? x).join(", ")}`}
+                {c.action === "approve" && ` · ${f.duration_hours === "0" ? "until removed" : `${f.duration_hours} h`}`}
+              </span>
+              <span className="text-xs text-slate-500">{fmt(Date.parse(c.created_at))}</span>
+              <span className={`ml-auto text-xs font-medium ${c.ok ? "text-emerald-700" : "text-rose-700"}`}>
+                {c.ok ? `✓ signed by ${c.citizen_id} on device ${c.key_id}` : "✗ signature does not verify"}
+              </span>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -470,13 +724,15 @@ function Activity({ recordId }: { recordId: string }) {
 }
 
 function RemoveDialog({ connection, onClose, onDone }: { connection: ConnectionView; onClose: () => void; onDone: () => void }) {
-  const { call } = useLive();
-  const [pw, setPw] = useState("");
-  const [code, setCode] = useState("");
+  const { call, me } = useLive();
+  const step = useStepUp();
+  const sendCode = useSendCode();
   const [error, setError] = useState("");
   async function remove() {
     try {
-      await call(`/v1/connections/${connection.connection_id}/remove`, { method: "POST", body: { password: pw, totp_code: code } });
+      if (me?.actor_type !== "citizen") return;
+      const device_signature = await deviceSignature({ action: "remove", subjectId: connection.connection_id, recordId: connection.record_id, signerId: me.id });
+      await call(`/v1/connections/${connection.connection_id}/remove`, { method: "POST", body: { ...step.body, device_signature } });
       onDone();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Removal failed");
@@ -486,20 +742,13 @@ function RemoveDialog({ connection, onClose, onDone }: { connection: ConnectionV
     <Modal open title={`Remove ${connection.facility.name}?`} onClose={onClose}>
       <div className="space-y-4 text-sm">
         <p className="text-slate-700">The hospital&apos;s keys are deleted and it can no longer open your record. It keeps read-only access to entries it wrote itself.</p>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Password">
-            <input type="password" className={inputCls} value={pw} onChange={(e) => setPw(e.target.value)} />
-          </Field>
-          <Field label="Authenticator code">
-            <input inputMode="numeric" maxLength={6} className={`${inputCls} font-mono`} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
-          </Field>
-        </div>
+        <StepUpFields {...step.props} send={sendCode} />
         {error && <p className="text-rose-600">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={remove} disabled={!pw || code.length !== 6}>
+          <Button variant="danger" onClick={remove} disabled={!step.ready}>
             Remove hospital
           </Button>
         </div>

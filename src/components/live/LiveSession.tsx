@@ -4,12 +4,26 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { cx } from "@/components/ui";
-import { api, ApiError, loadSession, saveSession, type Me, type Session } from "@/lib/live/api";
+import { NotificationBell } from "./NotificationBell";
+import { api, ApiError, loadSession, saveSession, toB64, type Me, type Session } from "@/lib/live/api";
+import { ensureDeviceKey } from "@/lib/live/keystore";
+import { x25519PublicKey } from "@/lib/sehatcrypto";
+
+/** Registers this browser's device key, so text about the citizen's records can be sealed to it. */
+async function registerDeviceKey(s: Session, me: Me) {
+  if (me.actor_type !== "citizen") return;
+  const k = ensureDeviceKey(me.id);
+  await api("/v1/me/device-key", { method: "PUT", token: s.token, body: { key_id: k.keyId, public_key: toB64(await x25519PublicKey(k.priv)) } }).catch(() => {
+    // Not fatal: sealed text just won't include this browser until the next sign-in.
+  });
+}
 
 type Live = {
   session: Session | null;
   me: Me | null;
   call: <T>(path: string, opts?: { method?: string; body?: unknown }) => Promise<T>;
+  /** Raw authenticated fetch (file bytes). */
+  raw: (path: string, init?: RequestInit) => Promise<Response>;
   signIn: (s: Session) => Promise<void>;
   signOut: () => void;
   refreshMe: () => Promise<void>;
@@ -39,7 +53,9 @@ export function LiveSession({ children }: { children: ReactNode }) {
   const fetchMe = useCallback(
     async (s: Session) => {
       try {
-        setMe(await api<Me>("/v1/me", { token: s.token }));
+        const m = await api<Me>("/v1/me", { token: s.token });
+        await registerDeviceKey(s, m);
+        setMe(m);
       } catch (e) {
         if (e instanceof ApiError && (e.status === 401 || e.status === 403)) signOut();
         else throw e;
@@ -55,7 +71,8 @@ export function LiveSession({ children }: { children: ReactNode }) {
       return;
     }
     api<Me>("/v1/me", { token: s.token })
-      .then((m) => {
+      .then(async (m) => {
+        await registerDeviceKey(s, m);
         setMe(m);
         setSession(s);
       })
@@ -82,6 +99,12 @@ export function LiveSession({ children }: { children: ReactNode }) {
     [session, signOut],
   );
 
+  const raw = useCallback(
+    (path: string, init: RequestInit = {}) =>
+      fetch(`/api${path}`, { ...init, headers: { ...(init.headers ?? {}), ...(session ? { Authorization: `Bearer ${session.token}` } : {}) } }),
+    [session],
+  );
+
   const signIn = useCallback(
     async (s: Session) => {
       await fetchMe(s);
@@ -97,7 +120,7 @@ export function LiveSession({ children }: { children: ReactNode }) {
   if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading…</div>;
 
   return (
-    <Ctx.Provider value={{ session, me, call, signIn, signOut, refreshMe }}>
+    <Ctx.Provider value={{ session, me, call, raw, signIn, signOut, refreshMe }}>
       <LiveShell>{children}</LiveShell>
     </Ctx.Provider>
   );
@@ -108,11 +131,16 @@ function LiveShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const nav =
     me?.actor_type === "staff"
-      ? [
-          { href: "/live/hospital", label: "Patients" },
-          { href: "/live/hospital/review", label: "Review queue" },
-          { href: "/live/settings", label: "Keys" },
-        ]
+      ? me.role === "Records Officer"
+        ? [
+            { href: "/live/hospital/desk", label: "Records desk" },
+            { href: "/live/hospital", label: "Patients" },
+          ]
+        : [
+            { href: "/live/hospital", label: "Patients" },
+            { href: "/live/hospital/review", label: "Review queue" },
+            { href: "/live/settings", label: "Keys" },
+          ]
       : me
         ? [{ href: "/live/citizen", label: "My SehatLog" }]
         : [];
@@ -139,6 +167,7 @@ function LiveShell({ children }: { children: ReactNode }) {
           </nav>
           {me && (
             <div className="ml-auto flex items-center gap-3 text-sm">
+              <NotificationBell />
               <span className="text-slate-600">
                 {me.actor_type === "staff" ? `${me.full_name} · ${me.role} · ${me.facility.name}` : `Citizen · record ${me.record_id}`}
               </span>

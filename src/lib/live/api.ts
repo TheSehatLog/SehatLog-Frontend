@@ -3,6 +3,9 @@
 
 export type Bytes = Uint8Array<ArrayBuffer>;
 
+/** Free text sealed to its readers (crypto spec section 8). */
+export type SealedText = { ciphertext: string; keys: { to: string; wrapped: string }[] };
+
 export function fromB64(s: string | null | undefined): Bytes {
   if (!s) return new Uint8Array(0);
   return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)) as Bytes;
@@ -17,7 +20,7 @@ export function toB64(b: Uint8Array): string {
 export const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 export const fromHex = (s: string): Bytes => Uint8Array.from(s.match(/../g) ?? [], (h) => parseInt(h, 16)) as Bytes;
 
-export type Facility = { facility_id: string; hfr_id: string; name: string; address: string; type: string; public_key?: string };
+export type Facility = { facility_id: string; hfr_id: string; name: string; address: string; type: string; public_key?: string; key_service_url?: string };
 
 export type Me =
   | {
@@ -40,8 +43,7 @@ export type AccessRequest = {
   facility_id: string;
   staff_id: string;
   categories: string[];
-  reason: string;
-  incapacity_reason?: string;
+  reason_sealed: SealedText | null; // {"reason", "incapacity"} JSON, sealed (spec section 8)
   stage: "patient" | "nok" | "family" | "break_glass";
   status: string;
   stage_deadline?: string;
@@ -83,9 +85,55 @@ export type Envelope = {
   created_at: string;
 };
 
-export type Proposal = Envelope & { proposal_id: string; status: string; reviewer_staff_id?: string; review_comment?: string; decided_at?: string };
-export type Entry = Envelope & { version: number; status: "current" | "superseded"; proposal_id: string; reviewer_staff_id: string; merged_at: string };
+export type Proposal = Envelope & {
+  proposal_id: string;
+  status: string;
+  reviewer_staff_id?: string;
+  review_comment_sealed?: SealedText;
+  fast_track?: boolean;
+  decided_at?: string;
+};
+export type Entry = Envelope & {
+  version: number;
+  status: "current" | "superseded";
+  proposal_id: string;
+  reviewer_staff_id: string;
+  merged_at: string;
+  /** Emergency fast-track: merged by its author, then confirmed by a second clinician. */
+  fast_tracked: boolean;
+  review_status: "reviewed" | "pending_review";
+  reviewed_by?: string;
+  reviewed_at?: string;
+};
 export type AuditEvent = { seq: number; at: string; actor_type: string; actor_id: string; facility_id?: string; action: string; categories?: string[] };
+
+export type Notification = {
+  notification_id: string;
+  kind: string;
+  title: string;
+  body: string;
+  record_id?: string;
+  link_id?: string;
+  urgent: boolean;
+  created_at: string;
+  read_at?: string;
+};
+
+export type Dispute = {
+  dispute_id: string;
+  record_id: string;
+  entry_id: string;
+  facility_id: string;
+  raised_by: string;
+  reason_sealed: SealedText | null;
+  status: "open" | "upheld" | "amended";
+  created_at: string;
+  resolution_sealed?: SealedText;
+  amendment_id?: string;
+  resolved_at?: string;
+};
+
+export type Attachment = { file_id: string; name: string; mime: string; size: number; key: string };
 
 export class ApiError extends Error {
   status: number;

@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useLive } from "@/components/live/LiveSession";
 import { Button, Card, Field, inputCls } from "@/components/ui";
-import { ApiError, login } from "@/lib/live/api";
+import { SecondFactor, factorBody, type Factor } from "@/components/live/SecondFactor";
+import { api, ApiError, login } from "@/lib/live/api";
 
 export default function LiveLogin() {
   const { me, signIn } = useLive();
@@ -14,6 +15,7 @@ export default function LiveLogin() {
   const [ident, setIdent] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  const [factor, setFactor] = useState<Factor>("totp");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -26,8 +28,8 @@ export default function LiveLogin() {
     setBusy(true);
     setError("");
     try {
-      const body: Record<string, string> =
-        kind === "staff" ? { username: ident.trim(), password, totp_code: code } : { nin: ident.trim(), password, totp_code: code };
+      const who: Record<string, string> = kind === "staff" ? { username: ident.trim() } : { nin: ident.trim() };
+      const body: Record<string, string> = { ...who, password, ...factorBody(factor, code) };
       await signIn(await login(kind, body));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not reach the SehatLog API.");
@@ -56,9 +58,19 @@ export default function LiveLogin() {
           <Field label="Password">
             <input type="password" className={inputCls} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
           </Field>
-          <Field label="Authenticator code">
-            <input inputMode="numeric" maxLength={6} className={`${inputCls} font-mono tracking-widest`} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
-          </Field>
+          <SecondFactor
+            factor={factor}
+            setFactor={setFactor}
+            code={code}
+            setCode={setCode}
+            send={async (channel) => {
+              if (!ident.trim()) throw new ApiError(400, kind === "staff" ? "Enter your username first." : "Enter your NIN first.");
+              await api("/v1/auth/otp", {
+                method: "POST",
+                body: { account_type: kind, channel, ...(kind === "staff" ? { username: ident.trim() } : { nin: ident.trim() }) },
+              });
+            }}
+          />
           {error && <p className="text-sm text-rose-600">{error}</p>}
           <Button type="submit" className="w-full" disabled={busy || !ident || !password || code.length !== 6}>
             {busy ? "Signing in…" : "Sign in"}
@@ -66,7 +78,7 @@ export default function LiveLogin() {
         </form>
       </Card>
       <p className="text-xs text-slate-500">
-        Development: run the API and <code>go run ./cmd/devseed codes</code> in SehatLog-Backend for demo accounts and current codes. Password: <code>sehatlog-dev-pass</code>.
+        Development: run the API and <code>go run ./cmd/devseed codes</code> in SehatLog-Backend for demo accounts and current codes. Password: <code>sehatlog-dev-pass</code>. SMS/email codes appear at <code>/api/v1/dev/outbox</code> when the API runs with <code>DEV_OUTBOX=1</code>.
         The clickable prototype (no backend) is at{" "}
         <Link className="text-teal-700 underline" href="/">
           /

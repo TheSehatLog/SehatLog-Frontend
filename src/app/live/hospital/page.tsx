@@ -4,16 +4,22 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { EntryView } from "@/components/live/EntryView";
 import { useLive } from "@/components/live/LiveSession";
+import { Sealed, useSealedText } from "@/components/live/Sealed";
 import { Badge, Button, Card, Empty, Field, fmt, inputCls, Modal } from "@/components/ui";
-import { ApiError, fromB64, type AccessRequest, type Connection, type Entry, type Me, type WrappedKey } from "@/lib/live/api";
-import { CATEGORIES, CATEGORY_LABEL, getFacilityKey, getSigningSeed } from "@/lib/live/keystore";
+import { ApiError, fromB64, type AccessRequest, type Connection, type Entry, type Me, type Proposal, type WrappedKey } from "@/lib/live/api";
+import { CATEGORIES, CATEGORY_LABEL, getSigningSeed } from "@/lib/live/keystore";
+import { useFacilityKeys } from "@/components/live/FacilityKeys";
+import { FingerprintScanner } from "@/components/live/FingerprintScanner";
 import { openRelease, type ReleaseBundle } from "@/lib/live/escrow";
-import { buildProposal, decryptEnvelope, latestKey, unwrapFacilityKeys, wrapKeysForFacility, type KeyRing, type Payload } from "@/lib/live/records";
+import { verifySignedConsent, type SignedConsent } from "@/lib/live/consent";
+import { MAX_FILE_BYTES, uploadEncrypted } from "@/lib/live/files";
+import { parseRequestReason, sealToFacilityAndCircle } from "@/lib/live/sealed";
+import { buildProposal, decryptEnvelope, latestKey, mergeSignature, unwrapFacilityKeys, wrapKeysForFacility, type KeyRing, type Payload } from "@/lib/live/records";
 
 type StaffMe = Extract<Me, { actor_type: "staff" }>;
 type Access =
   | { connected: false; pending_request?: AccessRequest }
-  | { connected: true; connection: Connection; role_categories: string[]; keys: WrappedKey[] };
+  | { connected: true; connection: Connection; role_categories: string[]; keys: WrappedKey[]; consents: SignedConsent[] };
 
 export default function HospitalPage() {
   const { me, call } = useLive();
@@ -23,12 +29,11 @@ export default function HospitalPage() {
 
   if (me?.actor_type !== "staff") return <Empty>Sign in as hospital staff to look up patients.</Empty>;
 
-  async function lookup(e: React.FormEvent) {
-    e.preventDefault();
+  async function find(body: { nin: string } | { fingerprint: string }) {
     setError("");
     setRecord(null);
     try {
-      setRecord(await call("/v1/lookup", { method: "POST", body: { nin } }));
+      setRecord(await call("/v1/lookup", { method: "POST", body }));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Lookup failed");
     }
@@ -45,12 +50,22 @@ export default function HospitalPage() {
       </div>
       <KeyWarnings me={me} />
       <Card title="Find a patient">
-        <form onSubmit={lookup} className="flex max-w-md gap-2">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            find({ nin });
+          }}
+          className="flex max-w-md gap-2"
+        >
           <input className={`${inputCls} font-mono`} value={nin} onChange={(e) => setNin(e.target.value.replace(/\D/g, "").slice(0, 11))} placeholder="11-digit NIN" />
           <Button type="submit" disabled={nin.length !== 11}>
             Look up
           </Button>
         </form>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          <span>No ID, or unconscious? Identify by fingerprint:</span>
+          <FingerprintScanner label="Scan and identify" onScan={(fingerprint) => find({ fingerprint })} />
+        </div>
         {error && <p className="mt-2 text-sm text-rose-600">{error}</p>}
       </Card>
       {record && <PatientPanel key={record.record_id} me={me} recordId={record.record_id} isMinor={record.is_minor} />}
@@ -59,7 +74,8 @@ export default function HospitalPage() {
 }
 
 function KeyWarnings({ me }: { me: StaffMe }) {
-  const missing = [!getFacilityKey(me.facility.facility_id) && "facility key", !me.signing_public_key && "signing key"].filter(Boolean);
+  const { source } = useFacilityKeys();
+  const missing = [!source && "facility key", !me.signing_public_key && "signing key"].filter(Boolean);
   if (missing.length === 0) return null;
   return (
     <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -108,37 +124,53 @@ function PatientPanel({ me, recordId, isMinor }: { me: StaffMe; recordId: string
           <p className="text-sm text-slate-700">
             Connected · {access.connection.categories.map((c) => CATEGORY_LABEL[c] ?? c).join(", ")}
             {access.connection.expires_at && <> · until {fmt(Date.parse(access.connection.expires_at))}</>} · your role opens {access.role_categories.join(", ")}
+            <ConsentProof consents={access.consents} />
           </p>
         ) : access.pending_request ? (
           <PendingRequest me={me} request={access.pending_request} onChange={reload} />
         ) : (
-          <RequestForm recordId={recordId} isMinor={isMinor} onSent={reload} />
+          <RequestForm me={me} recordId={recordId} isMinor={isMinor} onSent={reload} />
         )}
       </Card>
-      {access && !access.connected && CLINICAL.includes(me.role) && <EmergencyProfile me={me} recordId={recordId} />}
+      {access && !access.connected && CLINICAL.includes(me.role) && <EmergencyProfile recordId={recordId} />}
       {access && <EntriesPanel me={me} recordId={recordId} access={access} onChange={reload} />}
     </div>
+  );
+}
+
+// The approver's device-signed consent, verified here rather than trusted from the API.
+function ConsentProof({ consents }: { consents: SignedConsent[] }) {
+  const approval = consents.find((c) => c.action === "approve");
+  const [ok, setOk] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (approval) verifySignedConsent(approval).then(setOk);
+  }, [approval]);
+  if (!approval) return null;
+  return (
+    <span className={`mt-1 block text-xs ${ok === false ? "text-rose-700" : "text-emerald-700"}`}>
+      {ok === null ? "Checking consent signature…" : ok ? `✓ Consent signed on ${approval.citizen_id}'s device (${approval.key_id})` : "✗ The consent signature does not verify"}
+    </span>
   );
 }
 
 const CLINICAL = ["Doctor", "Consultant", "Medical Director", "Nurse", "Midwife", "Paramedic"];
 
 // Releases the Basic Emergency Profile through the escrow after a fingerprint match.
-function EmergencyProfile({ me, recordId }: { me: StaffMe; recordId: string }) {
+function EmergencyProfile({ recordId }: { recordId: string }) {
   const { call } = useLive();
-  const [fingerprint, setFingerprint] = useState(false);
   const [items, setItems] = useState<{ entry: Entry; payload: Payload | null }[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const { unwrap } = useFacilityKeys();
 
-  async function release() {
+  // The patient's finger is scanned; the identity register must match it to this record.
+  async function release(fingerprint: string) {
     setBusy(true);
     setError("");
     try {
-      const priv = getFacilityKey(me.facility.facility_id);
-      if (!priv) throw new Error("Load your facility key under Keys first.");
-      const bundle = await call<ReleaseBundle>(`/v1/records/${recordId}/emergency-profile`, { method: "POST", body: { fingerprint_verified: fingerprint } });
-      const ring = await openRelease(recordId, bundle, priv);
+      if (!unwrap) throw new Error("Your hospital key service is not configured (see Keys).");
+      const bundle = await call<ReleaseBundle>(`/v1/records/${recordId}/emergency-profile`, { method: "POST", body: { fingerprint } });
+      const ring = await openRelease(recordId, bundle, unwrap);
       const { entries } = await call<{ entries: Entry[] }>(`/v1/records/${recordId}/emergency-profile/entries`);
       setItems(await Promise.all(entries.map(async (entry) => ({ entry, payload: await decryptEnvelope(entry, ring) }))));
     } catch (e) {
@@ -157,13 +189,12 @@ function EmergencyProfile({ me, recordId }: { me: StaffMe; recordId: string }) {
       <div className="space-y-3 p-5 text-sm">
         {!items ? (
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2">
-              <input type="checkbox" className="accent-rose-700" checked={fingerprint} onChange={(e) => setFingerprint(e.target.checked)} />
-              The patient&apos;s fingerprint matched on the facility scanner
-            </label>
-            <Button variant="danger" onClick={release} disabled={!fingerprint || busy}>
-              {busy ? "Collecting escrow parts…" : "Release emergency profile"}
-            </Button>
+            <span className="text-slate-700">Scan the patient&apos;s finger to release their allergies, blood group and conditions:</span>
+            {busy ? (
+              <span className="text-slate-500">Matching fingerprint and collecting escrow parts…</span>
+            ) : (
+              <FingerprintScanner label="Scan and release" onScan={release} />
+            )}
           </div>
         ) : items.length === 0 ? (
           <Empty>No Basic Emergency Profile entries recorded.</Empty>
@@ -176,7 +207,7 @@ function EmergencyProfile({ me, recordId }: { me: StaffMe; recordId: string }) {
   );
 }
 
-function RequestForm({ recordId, isMinor, onSent }: { recordId: string; isMinor: boolean; onSent: () => void }) {
+function RequestForm({ me, recordId, isMinor, onSent }: { me: StaffMe; recordId: string; isMinor: boolean; onSent: () => void }) {
   const { call } = useLive();
   const [reason, setReason] = useState("Outpatient consultation");
   const [cats, setCats] = useState<string[]>(["clinical", "medications", "labs"]);
@@ -187,9 +218,12 @@ function RequestForm({ recordId, isMinor, onSent }: { recordId: string; isMinor:
   async function send() {
     setError("");
     try {
+      // Sealed in the browser to this facility and the patient's circle; SehatLog can't read it.
+      const text = JSON.stringify(canConsent ? { reason } : { reason, incapacity: incap });
+      const reason_sealed = await sealToFacilityAndCircle(call, text, "request-reason", recordId, me.facility.facility_id);
       await call(`/v1/records/${recordId}/access-requests`, {
         method: "POST",
-        body: { categories: cats, reason, patient_can_consent: canConsent, incapacity_reason: canConsent ? "" : incap },
+        body: { categories: cats, patient_can_consent: canConsent, reason_sealed },
       });
       onSent();
     } catch (e) {
@@ -201,7 +235,7 @@ function RequestForm({ recordId, isMinor, onSent }: { recordId: string; isMinor:
     <div className="space-y-3">
       <p className="text-sm text-slate-600">Your facility is not connected to this record.</p>
       <div className="grid gap-3 md:grid-cols-2">
-        <Field label="Reason (shown to the approver)">
+        <Field label="Reason (encrypted: only the approvers and your facility can read it)">
           <input className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
         <Field label="Scope requested">
@@ -254,13 +288,17 @@ function PendingRequest({ me, request, onChange }: { me: StaffMe; request: Acces
   const [fingerprint, setFingerprint] = useState(false);
   const [msg, setMsg] = useState("");
   const canSign = ["Doctor", "Consultant", "Medical Director"].includes(me.role);
+  const opened = parseRequestReason(useSealedText(request.reason_sealed, "request-reason", request.record_id).text);
+  // The break-glass reason is the one free text kept readable: the regulator audits it.
+  const [bgReason, setBgReason] = useState<string | null>(null);
+  const breakGlassReason = bgReason ?? (opened ? [opened.incapacity, opened.reason].filter(Boolean).join(": ") : "");
 
   async function sign() {
     setMsg("");
     try {
       const out = await call<{ granted: boolean }>(`/v1/access-requests/${request.request_id}/break-glass`, {
         method: "POST",
-        body: { fingerprint_verified: fingerprint, reason: request.incapacity_reason || request.reason },
+        body: { fingerprint_verified: fingerprint, reason: breakGlassReason },
       });
       setMsg(out.granted ? "Emergency access granted for 72 hours." : "Signed. A second signature is needed (treating doctor + Medical Director).");
       onChange();
@@ -275,17 +313,33 @@ function PendingRequest({ me, request, onChange }: { me: StaffMe; request: Acces
         <Badge tone="amber">{STAGE[request.stage]}</Badge>
       </p>
       <p className="text-slate-700">
-        Reason: {request.reason}
-        {request.incapacity_reason && <> · {request.incapacity_reason}</>}
+        Reason:{" "}
+        <Sealed
+          value={request.reason_sealed}
+          purpose="request-reason"
+          recordId={request.record_id}
+          render={(t) => {
+            const r = parseRequestReason(t);
+            return (
+              <>
+                {r?.reason}
+                {r?.incapacity && <> · {r.incapacity}</>}
+              </>
+            );
+          }}
+        />
         {request.stage_deadline && <> · moves on automatically at {fmt(Date.parse(request.stage_deadline))}</>}
       </p>
       {request.stage === "break_glass" && canSign && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3">
+          <Field label="Break-glass reason (readable by the regulator's audit)">
+            <input className={inputCls} value={breakGlassReason} onChange={(e) => setBgReason(e.target.value)} />
+          </Field>
           <label className="flex items-center gap-2">
             <input type="checkbox" className="accent-rose-700" checked={fingerprint} onChange={(e) => setFingerprint(e.target.checked)} />
             My fingerprint was verified on the facility scanner
           </label>
-          <Button variant="danger" onClick={sign} disabled={!fingerprint}>
+          <Button variant="danger" onClick={sign} disabled={!fingerprint || !breakGlassReason.trim()}>
             Sign break-glass
           </Button>
         </div>
@@ -297,19 +351,19 @@ function PendingRequest({ me, request, onChange }: { me: StaffMe; request: Acces
 
 function EntriesPanel({ me, recordId, access, onChange }: { me: StaffMe; recordId: string; access: Access; onChange: () => void }) {
   const { call } = useLive();
-  const facilityPriv = getFacilityKey(me.facility.facility_id);
+  const { unwrap: facilityUnwrap } = useFacilityKeys();
   const [unlocking, setUnlocking] = useState(false);
 
   // NOK, family and break-glass connections get their keys from the escrow: collect the
   // parts, open the keys, re-wrap them to this facility and store them.
   async function unlock() {
-    if (!access.connected || !facilityPriv) return;
+    if (!access.connected || !facilityUnwrap) return;
     setUnlocking(true);
     setError("");
     try {
       const con = access.connection;
       const bundle = await call<ReleaseBundle>(`/v1/connections/${con.connection_id}/escrow-release`);
-      const escrowRing = await openRelease(recordId, bundle, facilityPriv);
+      const escrowRing = await openRelease(recordId, bundle, facilityUnwrap);
       const keys = await wrapKeysForFacility(recordId, escrowRing, con.categories, fromB64(me.facility.public_key));
       await call(`/v1/connections/${con.connection_id}/keys`, { method: "POST", body: { keys } });
       onChange();
@@ -324,11 +378,11 @@ function EntriesPanel({ me, recordId, access, onChange }: { me: StaffMe; recordI
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const r = access.connected && facilityPriv && access.keys.length ? await unwrapFacilityKeys(recordId, access.keys, facilityPriv) : null;
+    const r = access.connected && facilityUnwrap && access.keys.length ? await unwrapFacilityKeys(recordId, access.keys, facilityUnwrap) : null;
     const { entries } = await call<{ entries: Entry[] }>(`/v1/records/${recordId}/entries`);
-    const own = facilityPriv ? { facilityId: me.facility.facility_id, priv: facilityPriv } : undefined;
+    const own = facilityUnwrap ? { facilityId: me.facility.facility_id, unwrap: facilityUnwrap } : undefined;
     return { ring: r, items: await Promise.all(entries.map(async (entry) => ({ entry, payload: await decryptEnvelope(entry, r, own) }))) };
-  }, [access, facilityPriv, recordId, call, me.facility.facility_id]);
+  }, [access, facilityUnwrap, recordId, call, me.facility.facility_id]);
 
   useEffect(() => {
     let live = true;
@@ -368,7 +422,7 @@ function EntriesPanel({ me, recordId, access, onChange }: { me: StaffMe; recordI
               : "The approver's device held no keys for this record."}
           </span>
           {["nok", "family", "break_glass"].includes(access.connection.granted_by_type) && (
-            <Button variant="secondary" onClick={unlock} disabled={unlocking || !facilityPriv}>
+            <Button variant="secondary" onClick={unlock} disabled={unlocking || !facilityUnwrap}>
               {unlocking ? "Collecting escrow parts…" : "Unlock keys from emergency escrow"}
             </Button>
           )}
@@ -405,7 +459,11 @@ function EntriesPanel({ me, recordId, access, onChange }: { me: StaffMe; recordI
           ring={ring}
           categories={writable}
           amends={proposing.amends}
-          onClose={() => setProposing(null)}
+          emergency={access.connected && access.connection.level === "emergency"}
+          onClose={() => {
+            setProposing(null);
+            onChange();
+          }}
         />
       )}
     </Card>
@@ -418,6 +476,7 @@ function ProposeDialog({
   ring,
   categories,
   amends,
+  emergency,
   onClose,
 }: {
   me: StaffMe;
@@ -425,6 +484,7 @@ function ProposeDialog({
   ring: KeyRing;
   categories: string[];
   amends?: { entry: Entry; payload: Payload | null };
+  emergency: boolean;
   onClose: () => void;
 }) {
   const { call } = useLive();
@@ -436,7 +496,12 @@ function ProposeDialog({
   const [fields, setFields] = useState(base?.fields ? Object.entries(base.fields).map(([k, v]) => `${k}: ${v}`).join("\n") : "");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
+  const { raw } = useLive();
   const seed = getSigningSeed(me.id);
+  // Emergency fast-track: doctors under emergency access, or in emergency medicine.
+  const canFastTrack = ["Doctor", "Consultant", "Medical Director"].includes(me.role) && (emergency || /emergency/i.test(me.specialty));
+  const [fast, setFast] = useState(false);
 
   async function submit() {
     setBusy(true);
@@ -446,6 +511,12 @@ function ProposeDialog({
       // Always the newest key version: the API rejects entries under a rotated-out key.
       const k = latestKey(ring, category);
       if (!k?.key) throw new Error("No key for this category on this device.");
+      // Encrypt and upload attachments first; their keys go inside the encrypted entry.
+      const attachments = [...(base?.attachments ?? [])];
+      for (const f of files) {
+        setMsg(`Encrypting and uploading ${f.name}…`);
+        attachments.push(await uploadEncrypted(raw, recordId, category, { name: f.name, type: f.type, bytes: new Uint8Array(await f.arrayBuffer()) }));
+      }
       const body = await buildProposal({
         recordId,
         category,
@@ -465,10 +536,16 @@ function ProposeDialog({
               .filter((p) => p.length >= 2 && p[0].trim())
               .map(([k2, ...v]) => [k2.trim(), v.join(":").trim()]),
           ),
+          ...(attachments.length ? { attachments } : {}),
         },
       });
-      await call(`/v1/records/${recordId}/proposals`, { method: "POST", body });
-      setMsg("Submitted. A reviewer at your facility must merge it.");
+      const p = await call<Proposal>(`/v1/records/${recordId}/proposals`, { method: "POST", body: { ...body, fast_track: fast } });
+      if (fast) {
+        await call(`/v1/proposals/${p.proposal_id}/merge`, { method: "POST", body: { merge_signature: await mergeSignature(seed, p) } });
+        setMsg("Merged as an emergency entry. A second clinician must review it within 24 hours.");
+      } else {
+        setMsg("Submitted. A reviewer at your facility must merge it.");
+      }
       setTimeout(onClose, 1200);
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Submit failed");
@@ -506,6 +583,24 @@ function ProposeDialog({
         <Field label="Coded fields" hint="One per line, as Name: value">
           <textarea className={`${inputCls} font-mono text-xs`} rows={3} value={fields} onChange={(e) => setFields(e.target.value)} />
         </Field>
+        <Field label="Attach files" hint="Scans, images or PDFs, up to 25 MB each. Encrypted in this browser before upload.">
+          <input
+            type="file"
+            multiple
+            className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm"
+            onChange={(e) => setFiles(Array.from(e.target.files ?? []).filter((f) => f.size <= MAX_FILE_BYTES))}
+          />
+        </Field>
+        {base?.attachments?.length ? <p className="text-xs text-slate-500">Keeps {base.attachments.length} existing attachment(s).</p> : null}
+        {canFastTrack && (
+          <label className="flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+            <input type="checkbox" className="mt-0.5 accent-rose-700" checked={fast} onChange={(e) => setFast(e.target.checked)} />
+            <span>
+              Emergency fast-track: add it to the record now, without waiting for review. A colleague must sign it as reviewed within 24 hours, or the Medical
+              Director is alerted.
+            </span>
+          </label>
+        )}
         <p className="text-xs text-slate-500">Encrypted and signed in this browser. The server stores only ciphertext.</p>
         {msg && <p className="text-sm text-slate-700">{msg}</p>}
         <div className="flex justify-end gap-2">
@@ -513,7 +608,7 @@ function ProposeDialog({
             Cancel
           </Button>
           <Button onClick={submit} disabled={busy || !title.trim()}>
-            {busy ? "Encrypting…" : "Sign and submit"}
+            {busy ? "Encrypting…" : fast ? "Sign and merge now" : "Sign and submit"}
           </Button>
         </div>
       </div>

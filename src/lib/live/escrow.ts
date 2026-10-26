@@ -7,6 +7,7 @@
 import * as sc from "../sehatcrypto/index.ts";
 import { fromB64, toB64, type Bytes, type WrappedKey } from "./api.ts";
 import type { KeyRing } from "./records.ts";
+import type { Unwrapper } from "./unwrap.ts";
 
 export const GROUPS = ["sehatlog", "regulator", "independent"] as const;
 export type Group = (typeof GROUPS)[number];
@@ -60,13 +61,16 @@ export type ReleaseBundle = {
   escrow_keys: WrappedKey[];
 };
 
-/** Hospital key service: collect the parts, open the escrow key, unwrap the category keys. */
-export async function openRelease(recordId: string, bundle: ReleaseBundle, facilityPriv: Bytes, base = ""): Promise<KeyRing> {
-  const got: Bytes[] = [];
-  for (const g of GROUPS) {
-    const r = await custodian<{ wrapped_part: string }>(`${custodianUrl(g, base)}/v1/release`, "POST", { ticket: bundle.ticket });
-    got.push(await sc.unwrapWithPrivateKey(facilityPriv, sc.escrowPartContext(bundle.release_id, g), fromB64(r.wrapped_part)));
-  }
+/**
+ * Collect the three parts (each wrapped by its custodian to the recipient: the hospital,
+ * through its key service, or a citizen's new device during recovery), open the escrow
+ * key, unwrap the category keys.
+ */
+export async function openRelease(recordId: string, bundle: ReleaseBundle, unwrap: Unwrapper, base = ""): Promise<KeyRing> {
+  const parts = await Promise.all(
+    GROUPS.map((g) => custodian<{ wrapped_part: string }>(`${custodianUrl(g, base)}/v1/release`, "POST", { ticket: bundle.ticket })),
+  );
+  const got = await Promise.all(GROUPS.map((g, i) => unwrap(sc.escrowPartContext(bundle.release_id, g), fromB64(parts[i].wrapped_part))));
   const k = sc.combineEscrowParts(got[0], got[1], got[2]);
   const escrowPriv = await sc.openEscrowKey(k, fromB64(bundle.escrow.seal_nonce), fromB64(bundle.escrow.sealed), recordId);
   const ring: KeyRing = new Map();

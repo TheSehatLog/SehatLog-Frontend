@@ -1,9 +1,10 @@
 // Record crypto for the live app, built on the shared spec library (sehatcrypto).
 
 import * as sc from "../sehatcrypto/index.ts";
-import { fromB64, toB64, toHex, type Bytes, type Envelope, type WrappedKey } from "./api.ts";
+import { fromB64, toB64, toHex, type Attachment, type Bytes, type Envelope, type WrappedKey } from "./api.ts";
+import type { Unwrapper } from "./unwrap.ts";
 
-export type Payload = { kind: string; title: string; details?: string; fields?: Record<string, string> };
+export type Payload = { kind: string; title: string; details?: string; fields?: Record<string, string>; attachments?: Attachment[] };
 
 export type KeyRing = Map<string, Map<number, Bytes>>; // category -> version -> key
 
@@ -18,24 +19,24 @@ export async function wrapKeysForFacility(recordId: string, ring: KeyRing, categ
   return out;
 }
 
-/** Hospital side: opens the category keys wrapped to the facility. */
-export async function unwrapFacilityKeys(recordId: string, keys: WrappedKey[], facilityPriv: Bytes): Promise<KeyRing> {
+/** Hospital side: opens the category keys wrapped to the facility (through its key service). */
+export async function unwrapFacilityKeys(recordId: string, keys: WrappedKey[], unwrap: Unwrapper): Promise<KeyRing> {
+  const opened = await Promise.all(keys.map((k) => unwrap(sc.categoryContext(recordId, k.category, k.key_version), fromB64(k.wrapped))));
   const ring: KeyRing = new Map();
-  for (const k of keys) {
-    const key = await sc.unwrapWithPrivateKey(facilityPriv, sc.categoryContext(recordId, k.category, k.key_version), fromB64(k.wrapped));
+  keys.forEach((k, i) => {
     if (!ring.has(k.category)) ring.set(k.category, new Map());
-    ring.get(k.category)!.set(k.key_version, key);
-  }
+    ring.get(k.category)!.set(k.key_version, opened[i]);
+  });
   return ring;
 }
 
 /** Decrypts an entry or proposal: with the category key, or as the author facility. */
-export async function decryptEnvelope(e: Envelope, ring: KeyRing | null, own?: { facilityId: string; priv: Bytes }): Promise<Payload | null> {
+export async function decryptEnvelope(e: Envelope, ring: KeyRing | null, own?: { facilityId: string; unwrap: Unwrapper }): Promise<Payload | null> {
   try {
     let dek: Bytes | null = null;
     const catKey = ring?.get(e.category)?.get(e.key_version);
     if (catKey) dek = await sc.aesKwUnwrap(catKey, fromB64(e.wrapped_dek));
-    else if (own && own.facilityId === e.facility_id) dek = await sc.unwrapWithPrivateKey(own.priv, sc.entryKeyContext(e.entry_id), fromB64(e.author_wrapped_dek));
+    else if (own && own.facilityId === e.facility_id) dek = await own.unwrap(sc.entryKeyContext(e.entry_id), fromB64(e.author_wrapped_dek));
     if (!dek) return null;
     const plain = await sc.openEntry(dek, fromB64(e.nonce), fromB64(e.ciphertext), e.record_id, e.category, e.key_version);
     return JSON.parse(new TextDecoder().decode(plain)) as Payload;
