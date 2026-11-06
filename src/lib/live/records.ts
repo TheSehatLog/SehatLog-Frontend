@@ -94,6 +94,11 @@ export async function mergeSignature(seed: Bytes, p: { proposal_id: string; entr
   return toB64(await sc.signMerge(seed, p.proposal_id, p.entry_id, p.record_id, fromB64(p.author_signature)));
 }
 
+/** A pharmacist's signature dispensing a merged prescription entry (spec section 13). */
+export async function dispenseSignature(seed: Bytes, e: { entry_id: string; record_id: string; merge_signature: string }, facilityId: string) {
+  return toB64(await sc.signDispense(seed, e.entry_id, e.record_id, facilityId, fromB64(e.merge_signature)));
+}
+
 /** Latest key version held for a category. */
 export function latestKey(ring: KeyRing | null, category: string): { version: number; key: Bytes } | null {
   const vers = ring?.get(category);

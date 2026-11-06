@@ -104,6 +104,17 @@ export type Entry = Envelope & {
   review_status: "reviewed" | "pending_review";
   reviewed_by?: string;
   reviewed_at?: string;
+  merge_signature: string;
+  /** Set once a pharmacy has dispensed this prescription. */
+  dispensed?: Dispensation;
+};
+export type Dispensation = {
+  dispensation_id: string;
+  entry_id: string;
+  facility_id: string;
+  facility_name: string;
+  staff_name: string;
+  dispensed_at: string;
 };
 export type AuditEvent = { seq: number; at: string; actor_type: string; actor_id: string; facility_id?: string; action: string; categories?: string[] };
 

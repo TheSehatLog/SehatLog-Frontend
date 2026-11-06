@@ -103,7 +103,7 @@ export function ProposeDialog({
     <Modal open title={amends ? "Propose an amendment" : "Propose a new entry"} onClose={onClose}>
       <div className="space-y-3">
         {!amends && (
-          <Field label="Input method">
+          <Field group label="Input method">
             <div className="flex flex-wrap gap-2">
               {(["Typed", "Detected (device)", "Detected (OCR)"] as InputMethod[]).map((m) => (
                 <button

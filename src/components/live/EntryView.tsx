@@ -46,6 +46,13 @@ export function EntryView({
         {"review_status" in env && env.review_status === "pending_review" && <Badge tone="rose">Emergency · pending review</Badge>}
         {"fast_tracked" in env && env.fast_tracked && env.review_status === "reviewed" && <Badge tone="slate">Emergency · reviewed</Badge>}
         {"fast_track" in env && env.fast_track && <Badge tone="rose">Emergency fast-track</Badge>}
+        {"dispensed" in env && env.dispensed ? (
+          <Badge tone="teal">
+            Dispensed at {env.dispensed.facility_name} · {fmt(Date.parse(env.dispensed.dispensed_at))}
+          </Badge>
+        ) : (
+          payload?.kind === "Prescription" && "merged_at" in env && !superseded && <Badge tone="sky">Not yet dispensed</Badge>
+        )}
         {badge}
         <div className="ml-auto">{actions}</div>
       </div>

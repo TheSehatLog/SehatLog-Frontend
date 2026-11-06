@@ -38,6 +38,11 @@ export function Sealed({ value, purpose, recordId, render }: { value: SealedText
   const { text, status } = useSealedText(value, purpose, recordId);
   if (!value) return null;
   if (status === "loading") return <span className="text-slate-400">Decrypting…</span>;
-  if (text == null) return <span className="italic text-slate-400">Encrypted; this device holds no key for it</span>;
+  if (text == null)
+    return (
+      <span className="italic text-slate-400" title="Sealed text is encrypted only to the devices that were signed in when it was written.">
+        Encrypted to your other signed-in devices (this one wasn&apos;t signed in yet when it was sent)
+      </span>
+    );
   return <>{render ? render(text) : text}</>;
 }

@@ -89,7 +89,7 @@ export function SecondFactor({
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1 text-xs">
+      <div className="grid grid-cols-3 border-2 border-ink text-xs">
         {(["totp", "sms", "email"] as const).map((f) => (
           <button
             key={f}
@@ -98,7 +98,7 @@ export function SecondFactor({
               setFactor(f);
               setMsg("");
             }}
-            className={`rounded-md py-1.5 ${factor === f ? "bg-white font-medium text-slate-900 shadow-sm" : "text-slate-600"}`}
+            className={`py-1.5 font-bold ${factor === f ? "bg-ink text-white" : "bg-white text-ink hover:bg-slate-100"}`}
           >
             {labels?.[f] ?? { totp: "Authenticator", sms: "SMS", email: "Email" }[f]}
           </button>

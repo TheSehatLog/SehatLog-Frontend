@@ -56,8 +56,8 @@ export function NotificationBell() {
         {unread > 0 && <span className="absolute -right-0.5 -top-0.5 rounded-full bg-rose-600 px-1.5 text-[10px] font-semibold text-white">{unread}</span>}
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-2 max-h-[70vh] w-[min(92vw,380px)] overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
-          <p className="border-b border-slate-100 px-4 py-2 text-sm font-semibold text-slate-900">Notifications</p>
+        <div className="absolute right-0 z-50 mt-2 max-h-[70vh] w-[min(92vw,380px)] overflow-y-auto border-2 border-ink bg-white shadow-lg">
+          <p className="bg-ink px-4 py-2 font-display text-sm font-extrabold uppercase text-white">Notifications</p>
           {items.length === 0 ? (
             <p className="px-4 py-6 text-center text-sm text-slate-500">Nothing yet.</p>
           ) : (

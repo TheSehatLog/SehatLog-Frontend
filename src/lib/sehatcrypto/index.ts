@@ -304,6 +304,48 @@ export async function signMerge(
   );
 }
 
+// ---- Dispensing (spec section 13) ----
+
+export function dispenseSigningInput(
+  entryId: string,
+  recordId: string,
+  facilityId: string,
+  mergeSignature: Bytes,
+): Bytes {
+  return enc(
+    [
+      "sehatlog/v1/dispense",
+      entryId,
+      recordId,
+      facilityId,
+      toBase64(mergeSignature),
+    ].join("\n"),
+  );
+}
+
+export async function signDispense(
+  seed: Bytes,
+  entryId: string,
+  recordId: string,
+  facilityId: string,
+  mergeSignature: Bytes,
+): Promise<Bytes> {
+  const k = await subtle().importKey(
+    "pkcs8",
+    concat(ED25519_PKCS8_PREFIX, seed),
+    "Ed25519",
+    false,
+    ["sign"],
+  );
+  return new Uint8Array(
+    await subtle().sign(
+      "Ed25519",
+      k,
+      dispenseSigningInput(entryId, recordId, facilityId, mergeSignature),
+    ),
+  );
+}
+
 // ---- Consent signatures (spec section 9) ----
 
 export type Consent = {

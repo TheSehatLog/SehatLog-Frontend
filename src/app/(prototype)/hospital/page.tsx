@@ -238,7 +238,7 @@ function RequestForm({ patient, staffId, declined }: { patient: Citizen; staffId
         <Field label="Reason (shown to the approver)">
           <input className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
-        <Field label="Scope requested" hint="The approver can accept this scope or narrow it.">
+        <Field group label="Scope requested" hint="The approver can accept this scope or narrow it.">
           <div className="flex flex-wrap gap-2">
             {CATEGORIES.filter((c) => c.id !== "basic").map((c) => (
               <label key={c.id} className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-sm ${cats.includes(c.id) ? "border-teal-600 bg-teal-50" : "border-slate-300"}`}>

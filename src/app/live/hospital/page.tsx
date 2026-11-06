@@ -14,7 +14,9 @@ import { openRelease, type ReleaseBundle } from "@/lib/live/escrow";
 import { verifySignedConsent, type SignedConsent } from "@/lib/live/consent";
 import { MAX_FILE_BYTES, uploadEncrypted } from "@/lib/live/files";
 import { parseRequestReason, sealToFacilityAndCircle } from "@/lib/live/sealed";
-import { buildProposal, decryptEnvelope, latestKey, mergeSignature, unwrapFacilityKeys, wrapKeysForFacility, type KeyRing, type Payload } from "@/lib/live/records";
+import { buildProposal, decryptEnvelope, dispenseSignature, latestKey, mergeSignature, unwrapFacilityKeys, wrapKeysForFacility, type KeyRing, type Payload } from "@/lib/live/records";
+import { allergiesOf, checkAllergies } from "@/lib/live/allergy";
+import { AllergyCheck } from "@/components/live/AllergyCheck";
 
 type StaffMe = Extract<Me, { actor_type: "staff" }>;
 type Access =
@@ -209,8 +211,9 @@ function EmergencyProfile({ recordId }: { recordId: string }) {
 
 function RequestForm({ me, recordId, isMinor, onSent }: { me: StaffMe; recordId: string; isMinor: boolean; onSent: () => void }) {
   const { call } = useLive();
-  const [reason, setReason] = useState("Outpatient consultation");
-  const [cats, setCats] = useState<string[]>(["clinical", "medications", "labs"]);
+  const pharmacy = me.role === "Pharmacist";
+  const [reason, setReason] = useState(pharmacy ? "Dispensing a prescription" : "Outpatient consultation");
+  const [cats, setCats] = useState<string[]>(pharmacy ? ["medications"] : ["clinical", "medications", "labs"]);
   const [canConsent, setCanConsent] = useState(true);
   const [incap, setIncap] = useState("Unconscious");
   const [error, setError] = useState("");
@@ -238,7 +241,7 @@ function RequestForm({ me, recordId, isMinor, onSent }: { me: StaffMe; recordId:
         <Field label="Reason (encrypted: only the approvers and your facility can read it)">
           <input className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
-        <Field label="Scope requested">
+        <Field group label="Scope requested">
           <div className="flex flex-wrap gap-2">
             {CATEGORIES.filter((c) => c !== "basic").map((c) => (
               <label key={c} className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-sm ${cats.includes(c) ? "border-teal-600 bg-teal-50" : "border-slate-300"}`}>
@@ -248,7 +251,7 @@ function RequestForm({ me, recordId, isMinor, onSent }: { me: StaffMe; recordId:
             ))}
           </div>
         </Field>
-        <Field label={isMinor ? "Approval goes to the parents or guardians" : "Can the patient consent now?"}>
+        <Field group label={isMinor ? "Approval goes to the parents or guardians" : "Can the patient consent now?"}>
           <div className="flex gap-2">
             <Button variant={canConsent ? "primary" : "secondary"} onClick={() => setCanConsent(true)}>
               {isMinor ? "Guardians will approve" : "Yes"}
@@ -375,6 +378,7 @@ function EntriesPanel({ me, recordId, access, onChange }: { me: StaffMe; recordI
   const [ring, setRing] = useState<KeyRing | null>(null);
   const [items, setItems] = useState<{ entry: Entry; payload: Payload | null }[] | null>(null);
   const [proposing, setProposing] = useState<{ amends?: { entry: Entry; payload: Payload | null } } | null>(null);
+  const [dispensing, setDispensing] = useState<{ entry: Entry; payload: Payload } | null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -399,6 +403,8 @@ function EntriesPanel({ me, recordId, access, onChange }: { me: StaffMe; recordI
   }, [load]);
 
   const writable = access.connected ? access.role_categories.filter((c) => latestKey(ring, c)) : [];
+  // Allergies for the prescribing and dispensing checks; null if Basic isn't readable here.
+  const allergies = items && latestKey(ring, "basic") ? allergiesOf(items.map((it) => ({ payload: it.payload, status: it.entry.status }))) : null;
   if (!access.connected && items?.length === 0) return null;
 
   return (
@@ -442,10 +448,21 @@ function EntriesPanel({ me, recordId, access, onChange }: { me: StaffMe; recordI
               version={it.entry.version}
               status={it.entry.status}
               actions={
-                it.payload && it.entry.status === "current" && writable.includes(it.entry.category) ? (
-                  <button className="text-xs font-medium text-teal-700 hover:underline" onClick={() => setProposing({ amends: it })}>
-                    Propose amendment
-                  </button>
+                it.payload && it.entry.status === "current" ? (
+                  me.role === "Pharmacist" ? (
+                    it.payload.kind === "Prescription" &&
+                    !it.entry.dispensed && (
+                      <Button onClick={() => setDispensing({ entry: it.entry, payload: it.payload! })}>
+                        Dispense
+                      </Button>
+                    )
+                  ) : (
+                    writable.includes(it.entry.category) && (
+                      <button className="text-xs font-medium text-teal-700 hover:underline" onClick={() => setProposing({ amends: it })}>
+                        Propose amendment
+                      </button>
+                    )
+                  )
                 ) : null
               }
             />
@@ -459,9 +476,22 @@ function EntriesPanel({ me, recordId, access, onChange }: { me: StaffMe; recordI
           ring={ring}
           categories={writable}
           amends={proposing.amends}
+          allergies={allergies}
           emergency={access.connected && access.connection.level === "emergency"}
           onClose={() => {
             setProposing(null);
+            onChange();
+          }}
+        />
+      )}
+      {dispensing && (
+        <DispenseDialog
+          me={me}
+          entry={dispensing.entry}
+          payload={dispensing.payload}
+          allergies={allergies}
+          onClose={() => {
+            setDispensing(null);
             onChange();
           }}
         />
@@ -476,6 +506,7 @@ function ProposeDialog({
   ring,
   categories,
   amends,
+  allergies,
   emergency,
   onClose,
 }: {
@@ -484,6 +515,7 @@ function ProposeDialog({
   ring: KeyRing;
   categories: string[];
   amends?: { entry: Entry; payload: Payload | null };
+  allergies: Payload[] | null;
   emergency: boolean;
   onClose: () => void;
 }) {
@@ -494,6 +526,12 @@ function ProposeDialog({
   const [title, setTitle] = useState(base?.title ?? "");
   const [details, setDetails] = useState(base?.details ?? "");
   const [fields, setFields] = useState(base?.fields ? Object.entries(base.fields).map(([k, v]) => `${k}: ${v}`).join("\n") : "");
+  // A prescription: structured fields, in Medications, checked against recorded allergies.
+  const prescribing = kind === "Prescription";
+  const [rx, setRx] = useState<Record<string, string>>(() => Object.fromEntries(RX_FIELDS.map((f) => [f, base?.fields?.[f] ?? ""])));
+  const alerts = prescribing ? checkAllergies(title, allergies ?? []) : [];
+  const stopped = alerts.some((a) => a.level === "stop");
+  const [override, setOverride] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
@@ -529,13 +567,18 @@ function ProposeDialog({
           kind,
           title,
           details,
-          fields: Object.fromEntries(
-            fields
-              .split("\n")
-              .map((l) => l.split(":"))
-              .filter((p) => p.length >= 2 && p[0].trim())
-              .map(([k2, ...v]) => [k2.trim(), v.join(":").trim()]),
-          ),
+          fields: prescribing
+            ? {
+                ...Object.fromEntries(Object.entries(rx).filter(([, v]) => v.trim())),
+                "Allergy check": stopped ? `Overridden: ${override.trim()}` : alerts.length ? "Caution noted" : allergies ? "No conflicts" : "Not checked",
+              }
+            : Object.fromEntries(
+                fields
+                  .split("\n")
+                  .map((l) => l.split(":"))
+                  .filter((p) => p.length >= 2 && p[0].trim())
+                  .map(([k2, ...v]) => [k2.trim(), v.join(":").trim()]),
+              ),
           ...(attachments.length ? { attachments } : {}),
         },
       });
@@ -567,22 +610,48 @@ function ProposeDialog({
             </select>
           </Field>
           <Field label="Entry type">
-            <select className={inputCls} value={kind} onChange={(e) => setKind(e.target.value)}>
+            <select
+              className={inputCls}
+              value={kind}
+              onChange={(e) => {
+                setKind(e.target.value);
+                if (e.target.value === "Prescription" && categories.includes("medications") && !amends) setCategory("medications");
+              }}
+            >
               {["Note", "Diagnosis", "Allergy", "Prescription", "Lab result", "Vitals", "Immunisation"].map((k2) => (
                 <option key={k2}>{k2}</option>
               ))}
             </select>
           </Field>
         </div>
-        <Field label="Title">
-          <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} />
+        <Field label={prescribing ? "Medicine and strength" : "Title"}>
+          <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={prescribing ? "e.g. Azithromycin 500 mg tablets" : undefined} />
         </Field>
-        <Field label="Details">
-          <textarea className={inputCls} rows={3} value={details} onChange={(e) => setDetails(e.target.value)} />
+        {prescribing && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              {RX_FIELDS.map((f) => (
+                <Field key={f} label={f}>
+                  <input className={inputCls} value={rx[f]} onChange={(e) => setRx((p) => ({ ...p, [f]: e.target.value }))} placeholder={RX_HINT[f]} />
+                </Field>
+              ))}
+            </div>
+            <AllergyCheck medicine={title} alerts={alerts} allergyCount={allergies?.length ?? null} />
+            {stopped && (
+              <Field label="To prescribe anyway, give the clinical reason (recorded on the prescription)">
+                <input className={inputCls} value={override} onChange={(e) => setOverride(e.target.value)} />
+              </Field>
+            )}
+          </>
+        )}
+        <Field label={prescribing ? "Instructions for the patient" : "Details"}>
+          <textarea className={inputCls} rows={prescribing ? 2 : 3} value={details} onChange={(e) => setDetails(e.target.value)} />
         </Field>
-        <Field label="Coded fields" hint="One per line, as Name: value">
-          <textarea className={`${inputCls} font-mono text-xs`} rows={3} value={fields} onChange={(e) => setFields(e.target.value)} />
-        </Field>
+        {!prescribing && (
+          <Field label="Coded fields" hint="One per line, as Name: value">
+            <textarea className={`${inputCls} font-mono text-xs`} rows={3} value={fields} onChange={(e) => setFields(e.target.value)} />
+          </Field>
+        )}
         <Field label="Attach files" hint="Scans, images or PDFs, up to 25 MB each. Encrypted in this browser before upload.">
           <input
             type="file"
@@ -607,8 +676,70 @@ function ProposeDialog({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={busy || !title.trim()}>
+          <Button onClick={submit} disabled={busy || !title.trim() || (stopped && !override.trim())}>
             {busy ? "Encrypting…" : fast ? "Sign and merge now" : "Sign and submit"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+const RX_FIELDS = ["Dose", "Frequency", "Duration", "Quantity"];
+const RX_HINT: Record<string, string> = { Dose: "1 tablet by mouth", Frequency: "Once daily", Duration: "3 days", Quantity: "3 tablets" };
+
+// A pharmacist dispenses a prescription: the allergy check runs again here, on this
+// device, and the dispensing is signed with their own key (spec section 13).
+function DispenseDialog({ me, entry, payload, allergies, onClose }: { me: StaffMe; entry: Entry; payload: Payload; allergies: Payload[] | null; onClose: () => void }) {
+  const { call } = useLive();
+  const alerts = checkAllergies(payload.title, allergies ?? []);
+  const stopped = alerts.some((a) => a.level === "stop");
+  const [confirmed, setConfirmed] = useState(false);
+  const [prescriberOk, setPrescriberOk] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const seed = getSigningSeed(me.id);
+
+  async function dispense() {
+    setBusy(true);
+    setMsg("");
+    try {
+      if (!seed || !me.signing_public_key) throw new Error("Register your signing key under Keys first.");
+      await call(`/v1/entries/${entry.entry_id}/dispense`, {
+        method: "POST",
+        body: { dispense_signature: await dispenseSignature(seed, entry, me.facility.facility_id) },
+      });
+      setMsg("Dispensed. The patient has been notified.");
+      setTimeout(onClose, 1200);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Dispensing failed");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open title="Dispense prescription" onClose={onClose}>
+      <div className="space-y-3">
+        <EntryView env={entry} payload={payload} version={entry.version} status={entry.status} />
+        <AllergyCheck medicine={payload.title} alerts={alerts} allergyCount={allergies?.length ?? null} />
+        {stopped && (
+          <label className="flex items-start gap-2 text-sm text-rose-900">
+            <input type="checkbox" className="mt-0.5 accent-rose-700" checked={prescriberOk} onChange={(e) => setPrescriberOk(e.target.checked)} />
+            <span>I have confirmed with the prescriber that this medicine is intended despite the allergy.</span>
+          </label>
+        )}
+        <label className="flex items-start gap-2 text-sm text-slate-800">
+          <input type="checkbox" className="mt-0.5 accent-teal-700" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+          <span>I have checked the patient&apos;s identity and explained how to take this medicine.</span>
+        </label>
+        <p className="text-xs text-slate-500">Signed with your key. SehatLog records that this prescription was dispensed here, so it can&apos;t be filled twice. It can&apos;t read the medicine.</p>
+        {msg && <p className="text-sm text-slate-700">{msg}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={dispense} disabled={busy || !confirmed || (stopped && !prescriberOk)}>
+            {busy ? "Signing…" : "Sign and dispense"}
           </Button>
         </div>
       </div>

@@ -11,15 +11,17 @@ export function Button({
   className,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "danger" | "ghost" }) {
+  // Poster-style: hard outline and a hard offset shadow that the button "presses" into.
+  const press = "shadow-[3px_3px_0_0_#0a0a0a] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0";
   const styles = {
-    primary: "bg-teal-700 text-white hover:bg-teal-800 disabled:bg-teal-700/40",
-    secondary: "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 disabled:opacity-50",
-    danger: "bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50",
-    ghost: "text-teal-800 hover:bg-teal-50 disabled:opacity-50",
+    primary: cx("border-2 border-ink bg-ink text-white hover:bg-white hover:text-ink disabled:border-slate-300 disabled:bg-slate-300 disabled:text-white", press),
+    secondary: cx("border-2 border-ink bg-white text-ink hover:bg-ink hover:text-white disabled:opacity-40", press),
+    danger: cx("border-2 border-ink bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40", press),
+    ghost: "border-2 border-transparent text-ink underline-offset-4 hover:underline disabled:opacity-40",
   }[variant];
   return (
     <button
-      className={cx("inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed", styles, className)}
+      className={cx("inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-bold transition-[background-color,color,transform,box-shadow] duration-100 disabled:cursor-not-allowed", styles, className)}
       {...props}
     />
   );
@@ -27,10 +29,10 @@ export function Button({
 
 export function Card({ title, action, children, className }: { title?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cx("rounded-xl border border-slate-200 bg-white shadow-sm", className)}>
+    <section className={cx("border-2 border-ink bg-white", className)}>
       {(title || action) && (
-        <header className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
-          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+        <header className="flex items-center justify-between gap-3 border-b-2 border-ink px-5 py-3.5">
+          <h2 className="font-display text-base font-extrabold leading-tight text-ink">{title}</h2>
           {action}
         </header>
       )}
@@ -39,23 +41,33 @@ export function Card({ title, action, children, className }: { title?: ReactNode
   );
 }
 
+// Monochrome tags: solid, outlined or dashed tell them apart; rose (red) stays for danger.
 const badgeTones = {
-  slate: "bg-slate-100 text-slate-700",
-  teal: "bg-teal-50 text-teal-800 ring-1 ring-teal-200",
-  amber: "bg-amber-50 text-amber-800 ring-1 ring-amber-200",
-  rose: "bg-rose-50 text-rose-700 ring-1 ring-rose-200",
-  violet: "bg-violet-50 text-violet-700 ring-1 ring-violet-200",
-  sky: "bg-sky-50 text-sky-800 ring-1 ring-sky-200",
+  slate: "border-slate-300 bg-slate-100 text-slate-700",
+  teal: "border-ink bg-ink text-white",
+  amber: "border-ink border-dashed bg-white text-ink",
+  rose: "border-rose-700 bg-rose-50 text-rose-700",
+  violet: "border-ink bg-white text-ink",
+  sky: "border-ink bg-slate-100 text-ink",
 };
 
 export function Badge({ tone = "slate", children }: { tone?: keyof typeof badgeTones; children: ReactNode }) {
-  return <span className={cx("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium", badgeTones[tone])}>{children}</span>;
+  return <span className={cx("inline-flex items-center border px-2 py-0.5 text-xs font-bold tracking-wide", badgeTones[tone])}>{children}</span>;
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+// `group` for a set of buttons or checkboxes: a <label> around them would name (and click) the first one.
+export function Field({ label, hint, group, children }: { label: string; hint?: string; group?: boolean; children: ReactNode }) {
+  if (group)
+    return (
+      <fieldset className="block">
+        <legend className="mb-1 block text-xs font-bold text-ink">{label}</legend>
+        {children}
+        {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
+      </fieldset>
+    );
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-700">{label}</span>
+      <span className="mb-1 block text-xs font-bold text-ink">{label}</span>
       {children}
       {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
     </label>
@@ -63,16 +75,16 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 }
 
 export const inputCls =
-  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-600/20";
+  "w-full border-2 border-ink bg-white px-3 py-2 text-sm font-medium text-ink placeholder:text-slate-400 focus:outline-none focus:shadow-[3px_3px_0_0_#0a0a0a] disabled:border-slate-300 disabled:bg-slate-50";
 
 export function Modal({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 sm:items-center" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
-        <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
-          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
-          <button onClick={onClose} className="rounded p-1 text-slate-500 hover:bg-slate-100" aria-label="Close">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/50 p-4 sm:items-center" onClick={onClose}>
+      <div className="w-full max-w-lg border-2 border-ink bg-white shadow-[8px_8px_0_0_#0a0a0a]" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
+        <header className="flex items-center justify-between bg-ink px-5 py-3.5">
+          <h2 className="font-display text-base font-extrabold leading-tight text-white">{title}</h2>
+          <button onClick={onClose} className="px-1.5 text-lg font-bold text-white hover:bg-white hover:text-ink" aria-label="Close">
             ✕
           </button>
         </header>
@@ -83,7 +95,7 @@ export function Modal({ open, title, onClose, children }: { open: boolean; title
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <p className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">{children}</p>;
+  return <p className="border-2 border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">{children}</p>;
 }
 
 export function fmt(ts?: number) {

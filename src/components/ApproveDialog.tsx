@@ -81,7 +81,7 @@ export function ApproveDialog({ request, approverId, onClose }: { request: Acces
             </div>
           </Field>
 
-          <Field label="Categories" hint="The Basic Emergency Profile is always included. Sensitive stays off unless you switch it on.">
+          <Field group label="Categories" hint="The Basic Emergency Profile is always included. Sensitive stays off unless you switch it on.">
             <div className="flex flex-wrap gap-2">
               {CATEGORIES.filter((c) => c.id !== "basic").map((c) => (
                 <label key={c.id} className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-sm ${cats.includes(c.id) ? "border-teal-600 bg-teal-50" : "border-slate-300"}`}>

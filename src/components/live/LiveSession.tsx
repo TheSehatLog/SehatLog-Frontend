@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { cx } from "@/components/ui";
+import { DemoInbox, demoInboxEnabled } from "./DemoInbox";
 import { NotificationBell } from "./NotificationBell";
 import { api, ApiError, loadSession, saveSession, toB64, type Me, type Session } from "@/lib/live/api";
 import { ensureDeviceKey } from "@/lib/live/keystore";
@@ -146,20 +147,22 @@ function LiveShell({ children }: { children: ReactNode }) {
         : [];
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3">
-          <Link href="/live" className="flex items-center gap-2 font-semibold text-slate-900">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-700 text-xs font-bold text-white">SL</span>
-            SehatLog
-            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800">Live API</span>
+    <div className="min-h-screen bg-white">
+      <header className="sticky top-0 z-40 border-b-4 border-ink bg-white">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3">
+          <Link href="/live" className="flex flex-col leading-none text-ink" aria-label="SehatLog home">
+            <span className="font-display text-xl font-black tracking-[0.3em]">SEHATLOG</span>
+            <span className="mt-1 text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">Live API · patient-owned records</span>
           </Link>
           <nav className="flex gap-1">
             {nav.map((n) => (
               <Link
                 key={n.href}
                 href={n.href}
-                className={cx("rounded-md px-3 py-1.5 text-sm", path === n.href ? "bg-teal-50 font-medium text-teal-800" : "text-slate-600 hover:bg-slate-100")}
+                className={cx(
+                  "border-2 px-3 py-1.5 text-sm font-bold",
+                  path === n.href ? "border-ink bg-ink text-white" : "border-transparent text-ink hover:border-ink",
+                )}
               >
                 {n.label}
               </Link>
@@ -168,10 +171,10 @@ function LiveShell({ children }: { children: ReactNode }) {
           {me && (
             <div className="ml-auto flex items-center gap-3 text-sm">
               <NotificationBell />
-              <span className="text-slate-600">
+              <span className="font-medium text-slate-600">
                 {me.actor_type === "staff" ? `${me.full_name} · ${me.role} · ${me.facility.name}` : `Citizen · record ${me.record_id}`}
               </span>
-              <button onClick={signOut} className="rounded-md px-2 py-1.5 text-slate-500 hover:bg-slate-100">
+              <button onClick={signOut} className="border-2 border-ink px-2.5 py-1 font-bold text-ink hover:bg-ink hover:text-white">
                 Sign out
               </button>
             </div>
@@ -179,6 +182,7 @@ function LiveShell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+      {demoInboxEnabled && <DemoInbox />}
     </div>
   );
 }

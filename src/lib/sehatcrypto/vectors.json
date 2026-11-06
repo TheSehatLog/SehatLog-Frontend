@@ -126,6 +126,18 @@
       "signature": "84dfc31bdb513e17639ffdb5a2ffeaf5a6b088ed7e997b5e456819b96ec21b20cf18852cde62c38ec18a35633a0996e39e40eddc70118323121f91a43d934602"
     }
   ],
+  "dispense_signature": [
+    {
+      "pharmacist_seed": "ebc81c622790977c5843af7d981175908e038863b0940edc8e794d49912529a1",
+      "pharmacist_public_key": "4b758a710e5084f22aeabc184e6833f20a5103361b1ec2f40ff7399d8418160c",
+      "entry_id": "ent_51c2d0",
+      "record_id": "rec_7f3a91",
+      "facility_id": "fac_phm",
+      "merge_signature": "84dfc31bdb513e17639ffdb5a2ffeaf5a6b088ed7e997b5e456819b96ec21b20cf18852cde62c38ec18a35633a0996e39e40eddc70118323121f91a43d934602",
+      "signing_input_utf8": "sehatlog/v1/dispense\nent_51c2d0\nrec_7f3a91\nfac_phm\nhN/DG9tRPhdjn/21ov/q9aawiO1+mXteRWgZuW7CGyDPGIUs3mLDjsGKNWM6CZbjnkDt3HARgyMSH5GkPZNGAg==",
+      "signature": "b5afafee92c946e93f2f97b5f4dd6862164e31037c36e9cbb2d645c94267b69d3f4d6d6dc5e35338587fd959b52d3f9ce9757e6188e0070ce12218872148b709"
+    }
+  ],
   "file_seal": [
     {
       "key": "ffb638164891847085dc75c2b9e2afedc2b49b9ab3d552fd0d692988ccd33ef2",

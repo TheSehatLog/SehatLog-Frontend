@@ -83,6 +83,15 @@ test("merge_signature", async () => {
   }
 });
 
+test("dispense_signature", async () => {
+  for (const c of v.dispense_signature) {
+    const input = sc.dispenseSigningInput(c.entry_id, c.record_id, c.facility_id, hex(c.merge_signature));
+    assert.equal(new TextDecoder().decode(input), c.signing_input_utf8);
+    assert.equal(toHex(await sc.ed25519PublicKey(hex(c.pharmacist_seed))), c.pharmacist_public_key);
+    assert.equal(toHex(await sc.signDispense(hex(c.pharmacist_seed), c.entry_id, c.record_id, c.facility_id, hex(c.merge_signature))), c.signature);
+  }
+});
+
 test("file_seal", async () => {
   for (const c of v.file_seal) {
     const sealed = await sc.sealFile(hex(c.key), hex(c.nonce), hex(c.plaintext), c.record_id, c.file_id, c.category);

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:crypto": "node --test --no-warnings src/lib/sehatcrypto/sehatcrypto.test.ts src/lib/live/sealed.test.ts"
+    "test:crypto": "node --test --no-warnings src/lib/sehatcrypto/sehatcrypto.test.ts src/lib/live/sealed.test.ts src/lib/live/allergy.test.ts"
   },
   "dependencies": {
     "next": "16.3.8",
@@ -15,6 +15,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

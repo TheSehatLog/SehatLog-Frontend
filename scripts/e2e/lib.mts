@@ -12,7 +12,13 @@ import { fromHex, toB64 } from "../../src/lib/live/api.ts";
 export const BACKEND = fileURLToPath(new URL("../../../SehatLog-Backend/", import.meta.url));
 export const WEB = process.env.SEHATLOG_WEB ?? "http://localhost:3210";
 export const PASS = "sehatlog-dev-pass";
-export const KEY_SERVICE: Record<string, string> = { fac_igh: "http://localhost:8201", fac_lcth: "http://localhost:8202", fac_ade: "http://localhost:8203" };
+// A hosted demo serves every key service under one origin: {SEHATLOG_KEYSERVICES}/{facility}.
+const KS = process.env.SEHATLOG_KEYSERVICES?.replace(/\/$/, "");
+export const KEY_SERVICE: Record<string, string> = KS
+  ? Object.fromEntries(["fac_igh", "fac_lcth", "fac_ade", "fac_phm"].map((f) => [f, `${KS}/${f}`]))
+  : { fac_igh: "http://localhost:8201", fac_lcth: "http://localhost:8202", fac_ade: "http://localhost:8203", fac_phm: "http://localhost:8204" };
+// Against a hosted demo there is no local database, so second factors come from the dev outbox.
+const REMOTE = !!process.env.SEHATLOG_WEB;
 const ENV = {
   ...process.env,
   DATABASE_URL: "postgres://sehatlog:sehatlog-dev@localhost:55432/sehatlog?sslmode=disable",
@@ -62,6 +68,7 @@ const usedStep = new Map<string, number>();
 const step = () => Math.floor(Date.now() / 30000);
 
 function totpFor(label: string): string | null {
+  if (REMOTE) return null;
   const now = step();
   if ((usedStep.get(label) ?? -1) >= now) return null;
   const out = execFileSync(`${BACKEND}bin/devseed.exe`, ["codes"], { env: ENV, cwd: BACKEND }).toString();

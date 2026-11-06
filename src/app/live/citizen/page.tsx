@@ -213,7 +213,7 @@ function ApproveDialog({ request, onClose, onDone }: { request: RequestView; onC
             </button>
           ))}
         </div>
-        <Field label={level === "full" ? "Also include" : "Categories"} hint="The Basic Emergency Profile is always included.">
+        <Field group label={level === "full" ? "Also include" : "Categories"} hint="The Basic Emergency Profile is always included.">
           <div className="flex flex-wrap gap-2">
             {CATEGORIES.filter((c) => c !== "basic" && (level === "scoped" || c === "sensitive")).map((c) => (
               <label key={c} className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-sm ${cats.includes(c) ? "border-teal-600 bg-teal-50" : "border-slate-300"}`}>
